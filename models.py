@@ -33,7 +33,7 @@ def NMT(src_vocab_size, tgt_vocab_size, input_dims, enc_type = 'bi', unit_type =
     for i in range(layer_num):
       # NOTE: cells over certain layer use residual structure to prevent gradient vanishing
       cells.append(Cell(unit_type, units, drop_rate, forget_bias, i >= layer_num - residual_layer_num));
-    encoder = tf.keras.layers.RNN(cells, return_sequences = False, return_state = True); # results = (last output, last output, last state)
+    encoder = tf.keras.layers.RNN(cells, return_sequences = True); # results.shape = (batch, length, units)
   elif enc_type == 'bi':
     layer_num = floor(layer_num / 2);
     residual_layer_num = floor(residual_layer_num / 2);
@@ -44,9 +44,9 @@ def NMT(src_vocab_size, tgt_vocab_size, input_dims, enc_type = 'bi', unit_type =
       forward_cells.append(Cell(unit_type, units, drop_rate, forget_bias, i >= layer_num - residual_layer_num));
       backward_cells.append(Cell(unit_type, units, drop_rate, forget_bias, i >= layer_num - residual_layer_num));
     encoder = tf.keras.layers.Bidirectional(
-      layer = tf.keras.layers.RNN(forward_cells, return_sequences = False, return_state = True),
-      backward_layer = tf.keras.layers.RNN(backward_cells, return_sequences = False, return_state = True, go_backwards = True),
-      merge_mode = 'concat'); # results = (last output, last output of forward, last state of forward, first output of backward, first state of backward)
+      layer = tf.keras.layers.RNN(forward_cells, return_sequences = True),
+      backward_layer = tf.keras.layers.RNN(backward_cells, return_sequences = True, go_backwards = True),
+      merge_mode = 'concat'); # results.shape = (batch, length, 2 * units)
   else:
     raise 'unknown encoder type!';
   sampler = tfa.seq2seq.TrainingSampler();
