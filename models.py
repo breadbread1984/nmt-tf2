@@ -23,8 +23,13 @@ def Cell(unit_type = 'lstm', units = None, drop_rate = 0, forget_bias = False, r
     cell = tf.nn.RNNCellResidualWrapper(cell);
   return cell;  
 
-def NMT(src_vocab_size, tgt_vocab_size, input_dims, enc_type = 'bi', unit_type = 'lstm', units = None, drop_rate = 0, forget_bias = False, residual_layer_num = None, layer_num = None):
+def NMT(src_vocab_size, tgt_vocab_size, input_dims, is_train = True, infer_mode = 'beam_search', infer_params = None, enc_type = 'bi', unit_type = 'lstm', units = None, drop_rate = 0, forget_bias = False, residual_layer_num = None, layer_num = None):
 
+  assert type(src_vocab_size) is int;
+  assert type(tgt_vocab_size) is int;
+  assert type(input_dims) is int;
+  assert infer_mode in ['beam_search', 'sample', 'greedy'];
+  assert type(infer_mode) is dict;
   assert type(units) is int;
   assert type(residual_layer_num) is int;
   assert type(layer_num) is int;
@@ -49,9 +54,24 @@ def NMT(src_vocab_size, tgt_vocab_size, input_dims, enc_type = 'bi', unit_type =
       merge_mode = 'concat'); # results.shape = (batch, length, 2 * units)
   else:
     raise 'unknown encoder type!';
-  sampler = tfa.seq2seq.TrainingSampler();
   output_layer = tf.keras.layers.Dense(tgt_vocab_size, use_bias = False);
-  decoder = tfa.seq2seq.BasicDecoder(encoder, sampler, output_layer);
+  if is_train == True:
+    sampler = tfa.seq2seq.TrainingSampler();
+    decoder = tfa.seq2seq.BasicDecoder(encoder, sampler, output_layer);
+  else:
+    if infer_mode == 'beam_search':
+      decoder = tfa.seq2seq.BeamSearchDecoder(encoder, infer_params['beam_width'], );
+    elif infer_mode == 'sample':
+      # TODO:
+      pass;
+    elif infer_mode == 'greedy':
+      # TODO:
+      pass;
+    elif infer_mode == 'basic':
+      sample = tfa.seq2seq.InferenceSampler();
+      decoder = tfa.seq2seq.BasicDecoder(encoder, sample, output_layer);
+    else:
+      raise 'unknown infer mode!';
 
   inputs = tf.keras.Input((None, 1)); # inputs.shape = (batch, length, 1)
   input_tensors = tf.keras.layers.Embeddings(src_vocab_size, input_dims)(inputs); # results.shape = (batch, length, input_dims)
