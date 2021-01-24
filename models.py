@@ -50,7 +50,7 @@ def NMT(src_vocab_size, tgt_vocab_size, input_dims, enc_type = 'bi', unit_type =
   else:
     raise 'unknown encoder type!';
   sampler = tfa.seq2seq.TrainingSampler();
-  output_layer = tf.keras.layers.Dense(tgt_vocab_size);
+  output_layer = tf.keras.layers.Dense(tgt_vocab_size, use_bias = False);
   decoder = tfa.seq2seq.BasicDecoder(encoder, sampler, output_layer);
 
   inputs = tf.keras.Input((None, 1)); # inputs.shape = (batch, length, 1)
