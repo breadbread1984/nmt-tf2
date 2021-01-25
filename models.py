@@ -55,26 +55,26 @@ def NMT(src_vocab_size, tgt_vocab_size, input_dims, is_train = True, infer_mode 
   else:
     raise 'unknown encoder type!';
   output_layer = tf.keras.layers.Dense(tgt_vocab_size, use_bias = False);
+  embedding_layer = tf.keras.layers.Embeddings(src_vocab_size, input_dims);
   if is_train == True:
     sampler = tfa.seq2seq.TrainingSampler();
     decoder = tfa.seq2seq.BasicDecoder(encoder, sampler, output_layer);
   else:
     if infer_mode == 'beam_search':
-      decoder = tfa.seq2seq.BeamSearchDecoder(encoder, infer_params['beam_width'], length_penalty_weight = infer_params['length_penalty_weight'], coverage_penalty_weight = infer_params['coverage_penalty_weight']);
+      decoder = tfa.seq2seq.BeamSearchDecoder(encoder, infer_params['beam_width'], embedding_fn = embedding_layer, length_penalty_weight = infer_params['length_penalty_weight'], coverage_penalty_weight = infer_params['coverage_penalty_weight']);
     else:
       if infer_mode == 'sample':
-        sampler = tfa.seq2seq.SampleEmbeddingSampler(softmax_temperature = infer_params['softmax_temperature']);
+        sampler = tfa.seq2seq.SampleEmbeddingSampler(embedding_fn = embedding_layer, softmax_temperature = infer_params['softmax_temperature']);
       elif infer_mode == 'greedy':
-        sampler = tfa.seq2seq.GreedyEmbeddingSampler();
+        sampler = tfa.seq2seq.GreedyEmbeddingSampler(embedding_fn = embedding_layer);
       else:
         raise 'unknown infer mode!';
       decoder = tfa.seq2seq.BasicDecoder(encoder, sampler, output_layer);
 
   inputs = tf.keras.Input((None, 1)); # inputs.shape = (batch, length, 1)
-  input_tensors = tf.keras.layers.Embeddings(src_vocab_size, input_dims)(inputs); # results.shape = (batch, length, input_dims)
   input_lengths = tf.keras.layers.Lambda(lambda x: tf.ones((tf.shape(x)[0],), dtype = tf.int64) * tf.shape(x)[1])(inputs); # input_lengths.shape = (batch)
   initial_state = decoder_cell.get_initial_state(input_lengths); # initial_state = (last_output, state)
-  output, state, lengths = decoder(input_tensors, sequence_length = input_lengths, initial_state = initial_state);
+  output, state, lengths = decoder(embedding_layer(inputs) if is_train == True else inputs, sequence_length = input_lengths, initial_state = initial_state);
   return tf.keras.Model(inputs = inputs, outputs = output.predicted_ids if infer_mode == 'beam_search' else output.sample_id);
 
 if __name__ == "__main__":
