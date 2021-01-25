@@ -60,25 +60,22 @@ def NMT(src_vocab_size, tgt_vocab_size, input_dims, is_train = True, infer_mode 
     decoder = tfa.seq2seq.BasicDecoder(encoder, sampler, output_layer);
   else:
     if infer_mode == 'beam_search':
-      decoder = tfa.seq2seq.BeamSearchDecoder(encoder, infer_params['beam_width'], );
-    elif infer_mode == 'sample':
-      # TODO:
-      pass;
-    elif infer_mode == 'greedy':
-      # TODO:
-      pass;
-    elif infer_mode == 'basic':
-      sample = tfa.seq2seq.InferenceSampler();
-      decoder = tfa.seq2seq.BasicDecoder(encoder, sample, output_layer);
+      decoder = tfa.seq2seq.BeamSearchDecoder(encoder, infer_params['beam_width'], length_penalty_weight = infer_params['length_penalty_weight'], coverage_penalty_weight = infer_params['coverage_penalty_weight']);
     else:
-      raise 'unknown infer mode!';
+      if infer_mode == 'sample':
+        sampler = tfa.seq2seq.SampleEmbeddingSampler(softmax_temperature = infer_params['softmax_temperature']);
+      elif infer_mode == 'greedy':
+        sampler = tfa.seq2seq.GreedyEmbeddingSampler();
+      else:
+        raise 'unknown infer mode!';
+      decoder = tfa.seq2seq.BasicDecoder(encoder, sampler, output_layer);
 
   inputs = tf.keras.Input((None, 1)); # inputs.shape = (batch, length, 1)
   input_tensors = tf.keras.layers.Embeddings(src_vocab_size, input_dims)(inputs); # results.shape = (batch, length, input_dims)
   input_lengths = tf.keras.layers.Lambda(lambda x: tf.ones((tf.shape(x)[0],), dtype = tf.int64) * tf.shape(x)[1])(inputs); # input_lengths.shape = (batch)
   initial_state = decoder_cell.get_initial_state(input_lengths); # initial_state = (last_output, state)
   output, state, lengths = decoder(input_tensors, sequence_length = input_lengths, initial_state = initial_state);
-  return tf.keras.Model(inputs = inputs, outputs = output.rnn_output);
+  return tf.keras.Model(inputs = inputs, outputs = output.predicted_ids if infer_mode == 'beam_search' else output.sample_id);
 
 if __name__ == "__main__":
   
