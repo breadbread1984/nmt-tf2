@@ -73,8 +73,9 @@ def NMT(src_vocab_size, tgt_vocab_size, input_dims, is_train = True, infer_mode 
 
   inputs = tf.keras.Input((None, 1)); # inputs.shape = (batch, length, 1)
   input_lengths = tf.keras.layers.Lambda(lambda x: tf.ones((tf.shape(x)[0],), dtype = tf.int64) * tf.shape(x)[1])(inputs); # input_lengths.shape = (batch)
-  initial_state = decoder_cell.get_initial_state(input_lengths); # initial_state = (last_output, state)
-  output, state, lengths = decoder(embedding_layer(inputs) if is_train == True else inputs, sequence_length = input_lengths, initial_state = initial_state);
+  input_tensors = embedding_layer(inputs);
+  initial_state = decoder_cell.get_initial_state(input_tensors); # initial_state = (last_output, state)
+  output, state, lengths = decoder(input_tensors if is_train == True else inputs, sequence_length = input_lengths, initial_state = initial_state);
   return tf.keras.Model(inputs = inputs, outputs = output.predicted_ids if infer_mode == 'beam_search' else output.sample_id);
 
 if __name__ == "__main__":
