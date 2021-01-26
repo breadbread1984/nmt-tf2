@@ -23,13 +23,13 @@ def Cell(unit_type = 'lstm', units = None, drop_rate = 0, forget_bias = False, r
     cell = tf.nn.RNNCellResidualWrapper(cell);
   return cell;  
 
-def NMT(src_vocab_size, tgt_vocab_size, input_dims, is_train = True, infer_mode = 'beam_search', infer_params = None, enc_type = 'bi', unit_type = 'lstm', units = None, drop_rate = 0, forget_bias = False, residual_layer_num = None, layer_num = None):
+def NMT(src_vocab_size, tgt_vocab_size, input_dims, is_train = True, infer_mode = 'beam_search', infer_params = {'beam_width': 0, 'start_token': 1, 'end_token': 2, 'length_penalty_weight': 0., 'coverage_penalty_weight': 0., 'softmax_temperature': 0.}, enc_type = 'uni', unit_type = 'lstm', units = 32, drop_rate = 0.2, forget_bias = 1.0, residual_layer_num = 1, layer_num = 2):
 
   assert type(src_vocab_size) is int;
   assert type(tgt_vocab_size) is int;
   assert type(input_dims) is int;
   assert infer_mode in ['beam_search', 'sample', 'greedy'];
-  assert type(infer_mode) is dict;
+  assert type(infer_params) is dict;
   assert type(units) is int;
   assert type(residual_layer_num) is int;
   assert type(layer_num) is int;
@@ -73,12 +73,14 @@ def NMT(src_vocab_size, tgt_vocab_size, input_dims, is_train = True, infer_mode 
       decoder = tfa.seq2seq.BasicDecoder(encoder, sampler, output_layer);
 
   inputs = tf.keras.Input((None, 1)); # inputs.shape = (batch, length, 1)
-  input_lengths = tf.keras.layers.Lambda(lambda x: tf.ones((tf.shape(x)[0],), dtype = tf.int64) * tf.shape(x)[1])(inputs); # input_lengths.shape = (batch)
+  input_lengths = tf.keras.Input(()); # input_lengths.shape = (batch)
   input_tensors = embedding_layer(inputs);
   initial_state = decoder_cell.get_initial_state(input_tensors); # initial_state = (last_output, state)
   output, state, lengths = decoder(input_tensors, sequence_length = input_lengths, initial_state = initial_state);
-  return tf.keras.Model(inputs = inputs, outputs = output.predicted_ids if infer_mode == 'beam_search' else output.sample_id);
+  return tf.keras.Model(inputs = (inputs, input_lengths), outputs = output.predicted_ids if infer_mode == 'beam_search' else output.sample_id);
 
 if __name__ == "__main__":
   
   assert tf.executing_eagerly();
+  nmt = NMT(100,200,64);
+  nmt.save('nmt.h5');
