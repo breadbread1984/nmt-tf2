@@ -8,17 +8,15 @@ def Cell(unit_type = 'lstm', units = None, drop_rate = 0, forget_bias = False, r
 
   assert unit_type in ['lstm','gru','layer_norm_lstm','nas'];
   if unit_type == 'lstm':
-    cell = tf.keras.layers.LSTMCell(units, unit_forget_bias = forget_bias);
+    cell = tf.keras.layers.LSTMCell(units, unit_forget_bias = forget_bias, dropout = drop_rate, recurrent_dropout = drop_rate);
   elif unit_type == 'gru':
-    cell = tf.keras.layers.GRUCell(units);
+    cell = tf.keras.layers.GRUCell(units, dropout = drop_rate, recurrent_dropout = drop_rate);
   elif unit_type == 'layer_norm_lstm':
-    cell = tfa.rnn.LayerNormLSTMCell(units, unit_forget_bias = forget_bias);
+    cell = tfa.rnn.LayerNormLSTMCell(units, unit_forget_bias = forget_bias, dropout = drop_rate, recurrent_dropout = drop_rate);
   elif unit_type == 'nas':
     cell = tfa.rnn.NASCell(units);
   else:
     raise 'unknown cell type!';
-  if drop_rate > 0:
-    cell = tf.nn.RNNCellDropoutWrapper(cell, input_keep_prob = 1. - drop_rate);
   if residual == True:
     cell = tf.nn.RNNCellResidualWrapper(cell);
   return cell;  
@@ -55,7 +53,7 @@ def NMT(src_vocab_size, tgt_vocab_size, input_dims, is_train = True, infer_mode 
   else:
     raise 'unknown encoder type!';
   output_layer = tf.keras.layers.Dense(tgt_vocab_size, use_bias = False);
-  embedding_layer = tf.keras.layers.Embeddings(src_vocab_size, input_dims);
+  embedding_layer = tf.keras.layers.Embedding(src_vocab_size, input_dims);
   if is_train == True:
     sampler = tfa.seq2seq.TrainingSampler();
     decoder = tfa.seq2seq.BasicDecoder(encoder, sampler, output_layer);
