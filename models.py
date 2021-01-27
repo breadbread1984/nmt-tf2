@@ -22,34 +22,29 @@ def Cell(unit_type = 'lstm', units = None, drop_rate = 0, forget_bias = False, r
   return cell;  
 
 def NMT(src_vocab_size, tgt_vocab_size, input_dims, is_train = False, 
-        encoder_params = {'nc_type': 'uni', 'unit_type': 'lstm', 'units': 32, 'drop_rate': 0.2, 'forget_bias': 1.0, 'use_residual': True, :'residual_layer_num': 1, 'layer_num': 2},
+        encoder_params = {'enc_type': 'uni', 'unit_type': 'lstm', 'units': 32, 'drop_rate': 0.2, 'forget_bias': 1.0, 'use_residual': True, 'residual_layer_num': 1, 'layer_num': 2},
         decoder_params = {'unit_type': 'lstm', 'units': 32, 'drop_rate': 0.2, 'forget_bias': 1.0, 'use_residual': True, 'residual_layer_num': 1, 'layer_num': 2},
         infer_params = {'infer_mode': 'beam_search', 'max_infer_len': None, 'beam_width': 0, 'start_token': 1, 'end_token': 2, 'length_penalty_weight': 0., 'coverage_penalty_weight': 0., 'softmax_temperature': 0.}):
 
-  assert type(src_vocab_size) is int;
-  assert type(tgt_vocab_size) is int;
-  assert type(input_dims) is int;
   assert infer_params['infer_mode'] in ['beam_search', 'sample', 'greedy'];
-  assert type(infer_params) is dict;
-  assert type(units) is int;
-  assert type(residual_layer_num) is int;
-  assert type(layer_num) is int;
   if encoder_params['use_residual'] and encoder_params['layer_num'] > 1: encoder_params['residual_layer_num'] = encoder_params['layer_num'] - 1;
   if decoder_params['use_residual'] and decoder_params['layer_num'] > 1: decoder_params['residual_layer_num'] = decoder_params['layer_num'] - 1;
 
   inputs = tf.keras.Input((None, 1), ragged = True); # inputs.shape = (batch, ragged length, 1)
+  inputs = tf.keras.layers.Lambda(lambda x: tf.squeeze(x, axis = -1))(inputs); # inputs.shape = (batch, ragged length)
   input_tensors = tf.keras.layers.Embedding(src_vocab_size, input_dims)(inputs); # input_tensors.shape = (batch, ragged length, input_dims)
   if is_train == True:
     targets = tf.keras.Input((None, 1)); # targets.shape = (batch, ragged length, 1)
+    targets = tf.keras.layers.Lambda(lambda x: tf.squeeze(x, axis = -1))(targets); # targets.shape = (batch, ragged length)
     target_tensors = tf.keras.layers.Embedding(target_vocab_size, input_dims)(targets); # target_tensors.shape = (batch, ragged length, input_dims)
   # 1) encoder
-  if enc_type == 'uni':
+  if encoder_params['enc_type'] == 'uni':
     cells = list();
     for i in range(encoder_params['layer_num']):
       # NOTE: cells over certain layer use residual structure to prevent gradient vanishing
       cells.append(Cell(encoder_params['unit_type'], encoder_params['units'], encoder_params['drop_rate'], encoder_params['forget_bias'], i >= encoder_params['layer_num'] - encoder_params['residual_layer_num']));
-    hidden, cell = tf.keras.layers.RNN(cells, return_state = True)(input_tensors); # hidden.shape = (batch, units) cell.shape = (batch, units)
-  elif enc_type == 'bi':
+    dummy, hidden, cell = tf.keras.layers.RNN(cells, return_state = True)(input_tensors); # hidden.shape = (batch, units) cell.shape = (batch, units)
+  elif encoder_params['enc_type'] == 'bi':
     layer_num = floor(layer_num / 2);
     residual_layer_num = floor(residual_layer_num / 2);
     forward_cells = list();
