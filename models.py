@@ -33,10 +33,13 @@ def NMT(src_vocab_size, tgt_vocab_size, input_dims, is_train = False,
   inputs = tf.keras.Input((None, 1), ragged = True); # inputs.shape = (batch, ragged length, 1)
   inputs = tf.keras.layers.Lambda(lambda x: tf.squeeze(x, axis = -1))(inputs); # inputs.shape = (batch, ragged length)
   input_tensors = tf.keras.layers.Embedding(src_vocab_size, input_dims)(inputs); # input_tensors.shape = (batch, ragged length, input_dims)
+  # NOTE: target_embedding is used by decoder, it transform the predicted id from the hidden_{t-1} to an embedding vector
+  # and feed the embedding as the input_t to decoder.
+  target_embedding = tf.keras.layers.Embedding(tgt_vocab_size, input_dims);
   if is_train == True:
     targets = tf.keras.Input((None, 1)); # targets.shape = (batch, ragged length, 1)
     targets = tf.keras.layers.Lambda(lambda x: tf.squeeze(x, axis = -1))(targets); # targets.shape = (batch, ragged length)
-    target_tensors = tf.keras.layers.Embedding(target_vocab_size, input_dims)(targets); # target_tensors.shape = (batch, ragged length, input_dims)
+    target_tensors = target_embedding(targets); # target_tensors.shape = (batch, ragged length, input_dims)
   # NOTE: because the tf.shape can't be used with ragged tensor, the batch is calculated this way
   batch = tf.keras.layers.Lambda(lambda x: tf.math.reduce_sum(tf.map_fn(lambda x: 1, x, fn_output_signature = tf.TensorSpec((), dtype = tf.int32))))(inputs); # batch.shape = ()
   # 1) encoder
@@ -76,12 +79,12 @@ def NMT(src_vocab_size, tgt_vocab_size, input_dims, is_train = False,
     decoder = tfa.seq2seq.BasicDecoder(decoder_cell, sampler, output_layer);
   else:
     if infer_params['infer_mode'] == 'beam_search':
-      decoder = tfa.seq2seq.BeamSearchDecoder(decoder_cell, beam_width = infer_params['beam_width'], length_penalty_weight = infer_params['length_penalty_weight'], coverage_penalty_weight = infer_params['coverage_penalty_weight']);
+      decoder = tfa.seq2seq.BeamSearchDecoder(decoder_cell, embedding_fn = target_embedding, beam_width = infer_params['beam_width'], length_penalty_weight = infer_params['length_penalty_weight'], coverage_penalty_weight = infer_params['coverage_penalty_weight']);
     else:
       if infer_params['infer_mode'] == 'sample':
-        sampler = tfa.seq2seq.SampleEmbeddingSampler(softmax_temperature = infer_params['softmax_temperature']);
+        sampler = tfa.seq2seq.SampleEmbeddingSampler(embedding_fn = target_embedding, softmax_temperature = infer_params['softmax_temperature']);
       elif infer_params['infer_mode'] == 'greedy':
-        sampler = tfa.seq2seq.GreedyEmbeddingSampler();
+        sampler = tfa.seq2seq.GreedyEmbeddingSampler(embedding_fn = target_embedding);
       else:
         raise 'unknown infer mode!';
       # get maximum_iterations
