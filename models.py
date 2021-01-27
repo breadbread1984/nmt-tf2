@@ -37,6 +37,7 @@ def NMT(src_vocab_size, tgt_vocab_size, input_dims, is_train = False,
     targets = tf.keras.Input((None, 1)); # targets.shape = (batch, ragged length, 1)
     targets = tf.keras.layers.Lambda(lambda x: tf.squeeze(x, axis = -1))(targets); # targets.shape = (batch, ragged length)
     target_tensors = tf.keras.layers.Embedding(target_vocab_size, input_dims)(targets); # target_tensors.shape = (batch, ragged length, input_dims)
+  # NOTE: because the tf.shape can't be used with ragged tensor, the batch is calculated this way
   batch = tf.keras.layers.Lambda(lambda x: tf.math.reduce_sum(tf.map_fn(lambda x: 1, x, fn_output_signature = tf.TensorSpec((), dtype = tf.int32))))(inputs); # batch.shape = ()
   # 1) encoder
   if encoder_params['enc_type'] == 'uni':
@@ -75,9 +76,8 @@ def NMT(src_vocab_size, tgt_vocab_size, input_dims, is_train = False,
     sampler = tfa.seq2seq.TrainingSampler();
     decoder = tfa.seq2seq.BasicDecoder(decoder_cell, sampler, output_layer);
   else:
-    start_tokens = tf.keras.layers.Lambda(lambda x, s: tf.ones((x,), dtype = tf.int32) * s, arguments = {'s': infer_params['start_token']})(batch);
     if infer_params['infer_mode'] == 'beam_search':
-      decoder = tfa.seq2seq.BeamSearchDecoder(decoder_cell, beam_width = infer_params['beam_width'], start_tokens = start_tokens, end_tokens = infer_params['end_token'], length_penalty_weight = infer_params['length_penalty_weight'], coverage_penalty_weight = infer_params['coverage_penalty_weight']);
+      decoder = tfa.seq2seq.BeamSearchDecoder(decoder_cell, beam_width = infer_params['beam_width'], length_penalty_weight = infer_params['length_penalty_weight'], coverage_penalty_weight = infer_params['coverage_penalty_weight']);
     else:
       if infer_params['infer_mode'] == 'sample':
         sampler = tfa.seq2seq.SampleEmbeddingSampler(softmax_temperature = infer_params['softmax_temperature']);
@@ -91,13 +91,14 @@ def NMT(src_vocab_size, tgt_vocab_size, input_dims, is_train = False,
       else:
         maximum_iterations = tf.keras.layers.Lambda(lambda x: tf.ones((x[0],), dtype = tf.int32) * 2 * tf.math.reduce_max(tf.map_fn(lambda x: tf.shape(x)[0], x[1])))([batch, inputs]); # max_infer_length = (batch)
       decoder = tfa.seq2seq.BasicDecoder(decoder_cell, sampler, output_layer, maximum_iterations = maximum_iterations);
+  start_tokens = tf.keras.layers.Lambda(lambda x, s: tf.ones((x,), dtype = tf.int32) * s, arguments = {'s': infer_params['start_token']})(batch);
   if is_train == True:
     # NOTE: has target_tensors for supervision at training mode
     target_length = tf.keras.layers.Lambda(lambda x: tf.map_fn(lambda x: tf.shape(x)[0], x))(targets);
-    output, state, lengths = decoder(target_tensors, sequence_length = target_length, initial_state = (hidden, cell));
+    output, state, lengths = decoder(target_tensors, start_tokens = start_tokens, end_token = infer_params['end_token'], sequence_length = target_length, initial_state = (hidden, cell));
   else:
     # NOTE: no target_tensors for supervision at inference mode
-    output, state, lengths = decoder(None, start_tokens = start_tokens, end_tokens = infer_params['end_token'], initial_state = (hidden, cell));
+    output, state, lengths = decoder(None, start_tokens = start_tokens, end_token = infer_params['end_token'], initial_state = (hidden, cell));
   # NOTE: rnn_output.shape = (batch, ragged length, tgt_vocab_size) predicted_ids.shape = (batch, beam_width)
   return tf.keras.Model(inputs = (inputs, targets) if is_train == True else inputs, outputs = output.rnn_output if is_train == True or infer_params['infer_mode'] != 'beam_search' else output.predicted_ids);
 
