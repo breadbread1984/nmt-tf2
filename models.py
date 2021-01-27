@@ -21,61 +21,89 @@ def Cell(unit_type = 'lstm', units = None, drop_rate = 0, forget_bias = False, r
     cell = tf.nn.RNNCellResidualWrapper(cell);
   return cell;  
 
-def NMT(src_vocab_size, tgt_vocab_size, input_dims, is_train = True, infer_mode = 'beam_search', infer_params = {'beam_width': 0, 'start_token': 1, 'end_token': 2, 'length_penalty_weight': 0., 'coverage_penalty_weight': 0., 'softmax_temperature': 0.}, enc_type = 'uni', unit_type = 'lstm', units = 32, drop_rate = 0.2, forget_bias = 1.0, residual_layer_num = 1, layer_num = 2):
+def NMT(src_vocab_size, tgt_vocab_size, input_dims, is_train = False, 
+        encoder_params = {'nc_type': 'uni', 'unit_type': 'lstm', 'units': 32, 'drop_rate': 0.2, 'forget_bias': 1.0, 'use_residual': True, :'residual_layer_num': 1, 'layer_num': 2},
+        decoder_params = {'unit_type': 'lstm', 'units': 32, 'drop_rate': 0.2, 'forget_bias': 1.0, 'use_residual': True, 'residual_layer_num': 1, 'layer_num': 2},
+        infer_params = {'infer_mode': 'beam_search', 'max_infer_len': None, 'beam_width': 0, 'start_token': 1, 'end_token': 2, 'length_penalty_weight': 0., 'coverage_penalty_weight': 0., 'softmax_temperature': 0.}):
 
   assert type(src_vocab_size) is int;
   assert type(tgt_vocab_size) is int;
   assert type(input_dims) is int;
-  assert infer_mode in ['beam_search', 'sample', 'greedy'];
+  assert infer_params['infer_mode'] in ['beam_search', 'sample', 'greedy'];
   assert type(infer_params) is dict;
   assert type(units) is int;
   assert type(residual_layer_num) is int;
   assert type(layer_num) is int;
+  if encoder_params['use_residual'] and encoder_params['layer_num'] > 1: encoder_params['residual_layer_num'] = encoder_params['layer_num'] - 1;
+  if decoder_params['use_residual'] and decoder_params['layer_num'] > 1: decoder_params['residual_layer_num'] = decoder_params['layer_num'] - 1;
+
+  inputs = tf.keras.Input((None, 1), ragged = True); # inputs.shape = (batch, ragged length, 1)
+  input_tensors = tf.keras.layers.Embedding(src_vocab_size, input_dims)(inputs); # input_tensors.shape = (batch, ragged length, input_dims)
+  if is_train == True:
+    targets = tf.keras.Input((None, 1)); # targets.shape = (batch, ragged length, 1)
+    target_tensors = tf.keras.layers.Embedding(target_vocab_size, input_dims)(targets); # target_tensors.shape = (batch, ragged length, input_dims)
+  # 1) encoder
   if enc_type == 'uni':
     cells = list();
-    for i in range(layer_num):
+    for i in range(encoder_params['layer_num']):
       # NOTE: cells over certain layer use residual structure to prevent gradient vanishing
-      cells.append(Cell(unit_type, units, drop_rate, forget_bias, i >= layer_num - residual_layer_num));
-    encoder = tf.keras.layers.RNN(cells, return_sequences = True); # results.shape = (batch, length, units)
+      cells.append(Cell(encoder_params['unit_type'], encoder_params['units'], encoder_params['drop_rate'], encoder_params['forget_bias'], i >= encoder_params['layer_num'] - encoder_params['residual_layer_num']));
+    hidden, cell = tf.keras.layers.RNN(cells, return_state = True)(input_tensors); # hidden.shape = (batch, units) cell.shape = (batch, units)
   elif enc_type == 'bi':
     layer_num = floor(layer_num / 2);
     residual_layer_num = floor(residual_layer_num / 2);
     forward_cells = list();
     backward_cells = list();
-    for i in range(layer_num):
+    for i in range(encoder_params['layer_num']):
       # NOTE: cells over certain layer use residual structure to prevent gradient vanishing
-      forward_cells.append(Cell(unit_type, units, drop_rate, forget_bias, i >= layer_num - residual_layer_num));
-      backward_cells.append(Cell(unit_type, units, drop_rate, forget_bias, i >= layer_num - residual_layer_num));
-    encoder = tf.keras.layers.Bidirectional(
-      layer = tf.keras.layers.RNN(forward_cells, return_sequences = True),
-      backward_layer = tf.keras.layers.RNN(backward_cells, return_sequences = True, go_backwards = True),
-      merge_mode = 'concat'); # results.shape = (batch, length, 2 * units)
+      forward_cells.append(Cell(encoder_params['unit_type'], encoder_params['units'], encoder_params['drop_rate'], encoder_params['forget_bias'], i >= encoder_params['layer_num'] - encoder_params['residual_layer_num']));
+      backward_cells.append(Cell(encoder_params['unit_type'], encoder_params['units'], encoder_params['drop_rate'], encoder_params['forget_bias'], i >= encoder_params['layer_num'] - encoder_params['residual_layer_num']));
+    concated_hidden, forward_hidden, forward_cell, backward_hidden, backward_cell = tf.keras.layers.Bidirectional(
+      layer = tf.keras.layers.RNN(forward_cells, return_state = True),
+      backward_layer = tf.keras.layers.RNN(backward_cells, return_state = True, go_backwards = True),
+      merge_mode = 'concat')(input_tensors); # results = (concated hidden, forward hidden, forward cell, backward hidden, backward cell)
+    hidden = tf.keras.layers.Concatenate(axis = -1)([forward_hidden, backward_hidden]); # hidden.shape = (batch, units * 2)
+    cell = tf.keras.layers.Concatenate(axis = -1)([forward_cell, backward_cell]); # cell.shape = (batch, units * 2)
   else:
     raise 'unknown encoder type!';
+  # 2) decoder
+  cells = list();
+  for i in range(decoder_params['layer_num']):
+    # NOTE: cells over certain layer use residual structure to prevent gradient vanishing
+    cells.append(Cell(decoder_params['unit_type'], decoder_params['units'], decoder_params['drop_rate'], decoder_params['forget_bias'], i >= decoder_params['layer_num'] - decoder_params['residual_layer_num']));
+  # NOTE: decoder can't use bidirectional RNN, because the output length is unknown
+  decoder_cell = tf.keras.layers.RNN(cells, return_sequences = True);
+  # NOTE: decoder RNN -> dense -> softmax -> output ids
   output_layer = tf.keras.layers.Dense(tgt_vocab_size, use_bias = False);
-  embedding_layer = tf.keras.layers.Embedding(src_vocab_size, input_dims);
   if is_train == True:
     sampler = tfa.seq2seq.TrainingSampler();
-    decoder = tfa.seq2seq.BasicDecoder(encoder, sampler, output_layer);
+    decoder = tfa.seq2seq.BasicDecoder(decoder_cell, sampler, output_layer);
   else:
     start_tokens = tf.keras.layers.Lambda(lambda x, s: tf.ones((tf.shape(x)[0],), dtype = tf.int32) * s, arguments = {'s': infer_params['start_token']})(inputs);
-    if infer_mode == 'beam_search':
-      decoder = tfa.seq2seq.BeamSearchDecoder(encoder, beam_width = infer_params['beam_width'], start_tokens = start_tokens, end_tokens = infer_params['end_token'], length_penalty_weight = infer_params['length_penalty_weight'], coverage_penalty_weight = infer_params['coverage_penalty_weight']);
+    if infer_params['infer_mode'] == 'beam_search':
+      decoder = tfa.seq2seq.BeamSearchDecoder(decoder_cell, beam_width = infer_params['beam_width'], start_tokens = start_tokens, end_tokens = infer_params['end_token'], length_penalty_weight = infer_params['length_penalty_weight'], coverage_penalty_weight = infer_params['coverage_penalty_weight']);
     else:
-      if infer_mode == 'sample':
-        sampler = tfa.seq2seq.SampleEmbeddingSampler(start_tokens = start_tokens, end_tokens = infer_params['end_token'], softmax_temperature = infer_params['softmax_temperature']);
-      elif infer_mode == 'greedy':
-        sampler = tfa.seq2seq.GreedyEmbeddingSampler(start_tokens = start_tokens, end_tokens = infer_params['end_token']);
+      if infer_params['infer_mode'] == 'sample':
+        sampler = tfa.seq2seq.SampleEmbeddingSampler(softmax_temperature = infer_params['softmax_temperature']);
+      elif infer_params['infer_mode'] == 'greedy':
+        sampler = tfa.seq2seq.GreedyEmbeddingSampler();
       else:
         raise 'unknown infer mode!';
-      decoder = tfa.seq2seq.BasicDecoder(encoder, sampler, output_layer);
-
-  inputs = tf.keras.Input((None, 1)); # inputs.shape = (batch, length, 1)
-  input_lengths = tf.keras.Input(()); # input_lengths.shape = (batch)
-  input_tensors = embedding_layer(inputs);
-  initial_state = decoder_cell.get_initial_state(input_tensors); # initial_state = (last_output, state)
-  output, state, lengths = decoder(input_tensors, sequence_length = input_lengths, initial_state = initial_state);
-  return tf.keras.Model(inputs = (inputs, input_lengths), outputs = output.predicted_ids if infer_mode == 'beam_search' else output.sample_id);
+      # get maximum_iterations
+      if infer_params['max_infer_len']:
+        maximum_iterations = tf.keras.layers.Lambda(lambda x, l: tf.ones((tf.shape(x)[0]), dtype = tf.int32) * l, arguments = {'l': infer_params['max_infer_len']})(inputs); # max_infer_length = (batch)
+      else:
+        maximum_iterations = tf.keras.layers.Lambda(lambda x: tf.ones((tf.shape(x)[0]), dtype = tf.int32) * 2 * tf.math.reduce_max(tf.map_fn(lambda x: tf.shape(x)[0], x)))(inputs); # max_infer_length = (batch)
+      decoder = tfa.seq2seq.BasicDecoder(decoder_cell, sampler, output_layer, maximum_iterations = maximum_iterations);
+  if is_train == True:
+    # NOTE: has target_tensors for supervision at training mode
+    target_length = tf.keras.layers.Lambda(lambda x: tf.map_fn(lambda x: tf.shape(x)[0], x))(targets);
+    output, state, lengths = decoder(target_tensors, sequence_length = target_length, initial_state = (hidden, cell));
+  else:
+    # NOTE: no target_tensors for supervision at inference mode
+    output, state, lengths = decoder(None, start_tokens = start_tokens, end_tokens = infer_params['end_token'], initial_state = (hidden, cell));
+  # NOTE: rnn_output.shape = (batch, ragged length, tgt_vocab_size) sample_id.shape = (batch, ragged length)
+  return tf.keras.Model(inputs = (inputs, targets) if is_train == True else inputs, outputs = output.rnn_output if is_train == True else output.sample_id);
 
 if __name__ == "__main__":
   
