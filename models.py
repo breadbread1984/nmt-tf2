@@ -50,8 +50,8 @@ def NMT(src_vocab_size, tgt_vocab_size, input_dims, is_train = False,
       cells.append(Cell(encoder_params['unit_type'], encoder_params['units'], encoder_params['drop_rate'], encoder_params['forget_bias'], i >= encoder_params['layer_num'] - encoder_params['residual_layer_num']));
     dummy, hidden, cell = tf.keras.layers.RNN(cells, return_state = True)(input_tensors); # hidden.shape = (batch, units) cell.shape = (batch, units)
   elif encoder_params['enc_type'] == 'bi':
-    layer_num = floor(layer_num / 2);
-    residual_layer_num = floor(residual_layer_num / 2);
+    layer_num = floor(encoder_params['layer_num'] / 2);
+    residual_layer_num = floor(encoder_params['residual_layer_num'] / 2);
     forward_cells = list();
     backward_cells = list();
     for i in range(encoder_params['layer_num']):
