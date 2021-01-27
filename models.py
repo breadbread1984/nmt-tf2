@@ -24,7 +24,7 @@ def Cell(unit_type = 'lstm', units = None, drop_rate = 0, forget_bias = False, r
 def NMT(src_vocab_size, tgt_vocab_size, input_dims, is_train = False, 
         encoder_params = {'enc_type': 'uni', 'unit_type': 'lstm', 'units': 32, 'drop_rate': 0.2, 'forget_bias': 1.0, 'use_residual': True, 'residual_layer_num': 1, 'layer_num': 2},
         decoder_params = {'unit_type': 'lstm', 'units': 32, 'drop_rate': 0.2, 'forget_bias': 1.0, 'use_residual': True, 'residual_layer_num': 1, 'layer_num': 2},
-        infer_params = {'infer_mode': 'beam_search', 'max_infer_len': None, 'beam_width': 2, 'start_token': 1, 'end_token': 2, 'length_penalty_weight': 0., 'coverage_penalty_weight': 0., 'softmax_temperature': 0.}):
+        infer_params = {'infer_mode': 'beam_search', 'start_token': 1, 'end_token': 2, 'max_infer_len': None, 'beam_width': 2, 'length_penalty_weight': 0., 'coverage_penalty_weight': 0., 'softmax_temperature': 0.}):
 
   assert infer_params['infer_mode'] in ['beam_search', 'sample', 'greedy'];
   if encoder_params['use_residual'] and encoder_params['layer_num'] > 1: encoder_params['residual_layer_num'] = encoder_params['layer_num'] - 1;
@@ -89,16 +89,16 @@ def NMT(src_vocab_size, tgt_vocab_size, input_dims, is_train = False,
         raise 'unknown infer mode!';
       # get maximum_iterations
       if infer_params['max_infer_len']:
-        maximum_iterations = tf.keras.layers.Lambda(lambda x, l: tf.ones((x,), dtype = tf.int32) * l, arguments = {'l': infer_params['max_infer_len']})(batch); # max_infer_length = (batch)
+        maximum_iterations = tf.keras.layers.Lambda(lambda x, l: l, arguments = {'l': infer_params['max_infer_len']})(inputs); # max_infer_length = (batch)
       else:
-        maximum_iterations = tf.keras.layers.Lambda(lambda x: tf.ones((x[0],), dtype = tf.int32) * 2 * tf.math.reduce_max(tf.map_fn(lambda x: tf.shape(x)[0], x[1])))([batch, inputs]); # max_infer_length = (batch)
+        maximum_iterations = tf.keras.layers.Lambda(lambda x: 2 * tf.math.reduce_max(tf.map_fn(lambda x: tf.shape(x)[0], x, fn_output_signature = tf.TensorSpec((), dtype = tf.int32))))([inputs]); # max_infer_length = (batch)
       decoder = tfa.seq2seq.BasicDecoder(decoder_cell, sampler, output_layer, maximum_iterations = maximum_iterations);
-  start_tokens = tf.keras.layers.Lambda(lambda x, s: tf.ones((x,), dtype = tf.int32) * s, arguments = {'s': infer_params['start_token']})(batch);
   if is_train == True:
     # NOTE: has target_tensors for supervision at training mode
-    target_length = tf.keras.layers.Lambda(lambda x: tf.map_fn(lambda x: tf.shape(x)[0], x))(targets); # target_length.shape = (batch)
-    output, state, lengths = decoder(target_tensors, start_tokens = start_tokens, end_token = infer_params['end_token'], sequence_length = target_length, initial_state = (hidden, cell));
+    target_length = tf.keras.layers.Lambda(lambda x: tf.map_fn(lambda x: tf.shape(x)[0], x, fn_output_signature = tf.TensorSpec((), dtype = tf.int32)))(targets); # target_length.shape = (batch)
+    output, state, lengths = decoder(target_tensors, sequence_length = target_length, initial_state = (hidden, cell));
   else:
+    start_tokens = tf.keras.layers.Lambda(lambda x, s: tf.ones((x,), dtype = tf.int32) * s, arguments = {'s': infer_params['start_token']})(batch);
     # NOTE: no target_tensors for supervision at inference mode
     output, state, lengths = decoder(None, start_tokens = start_tokens, end_token = infer_params['end_token'], initial_state = (hidden, cell));
   # NOTE: rnn_output.shape = (batch, ragged length, tgt_vocab_size) predicted_ids.shape = (batch, beam_width)
@@ -108,5 +108,14 @@ def NMT(src_vocab_size, tgt_vocab_size, input_dims, is_train = False,
 if __name__ == "__main__":
   
   assert tf.executing_eagerly();
-  nmt = NMT(100,200,64);
-  nmt.save('nmt.h5');
+  nmt = NMT(100, 200, 64, is_train = True);
+  nmt.save('nmt_train.h5');
+  infer_params = {'infer_mode': 'beam_search', 'start_token': 1, 'end_token': 2, 'max_infer_len': None, 'beam_width': 2, 'length_penalty_weight': 0., 'coverage_penalty_weight': 0.};
+  nmt = NMT(100, 200, 64, infer_params = infer_params);
+  nmt.save('nmt_infer_beamsearch.h5');
+  infer_params = {'infer_mode': 'sample', 'start_token': 1, 'end_token': 2, 'max_infer_len': None, 'softmax_temperature': 0.};
+  nmt = NMT(100, 200, 64, infer_params = infer_params);
+  nmt.save('nmt_infer_sample.h5');
+  infer_params = {'infer_mode': 'greedy', 'start_token': 1, 'end_token': 2, 'max_infer_len': None};
+  nmt = NMT(100, 200, 64, infer_params = infer_params);
+  nmt.save('nmt_infer_greedy.h5');
