@@ -91,7 +91,7 @@ def NMT(src_vocab_size, tgt_vocab_size, input_dims, is_train = False,
       if infer_params['max_infer_len']:
         maximum_iterations = tf.keras.layers.Lambda(lambda x, l: l, arguments = {'l': infer_params['max_infer_len']})(inputs); # max_infer_length = (batch)
       else:
-        maximum_iterations = tf.keras.layers.Lambda(lambda x: 2 * tf.math.reduce_max(tf.map_fn(lambda x: tf.shape(x)[0], x, fn_output_signature = tf.TensorSpec((), dtype = tf.int32))))([inputs]); # max_infer_length = (batch)
+        maximum_iterations = tf.keras.layers.Lambda(lambda x: 2 * tf.math.reduce_max(tf.map_fn(lambda x: tf.shape(x)[0], x, fn_output_signature = tf.TensorSpec((), dtype = tf.int32))))(inputs); # max_infer_length = (batch)
       decoder = tfa.seq2seq.BasicDecoder(decoder_cell, sampler, output_layer, maximum_iterations = maximum_iterations);
   if is_train == True:
     # NOTE: has target_tensors for supervision at training mode
