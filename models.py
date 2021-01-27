@@ -31,15 +31,15 @@ def NMT(src_vocab_size, tgt_vocab_size, input_dims, is_train = False,
   if decoder_params['use_residual'] and decoder_params['layer_num'] > 1: decoder_params['residual_layer_num'] = decoder_params['layer_num'] - 1;
 
   inputs = tf.keras.Input((None, 1), ragged = True); # inputs.shape = (batch, ragged length, 1)
-  inputs = tf.keras.layers.Lambda(lambda x: tf.squeeze(x, axis = -1))(inputs); # inputs.shape = (batch, ragged length)
-  input_tensors = tf.keras.layers.Embedding(src_vocab_size, input_dims)(inputs); # input_tensors.shape = (batch, ragged length, input_dims)
+  squeezed_inputs = tf.keras.layers.Lambda(lambda x: tf.squeeze(x, axis = -1))(inputs); # inputs.shape = (batch, ragged length)
+  input_tensors = tf.keras.layers.Embedding(src_vocab_size, input_dims)(squeezed_inputs); # input_tensors.shape = (batch, ragged length, input_dims)
   # NOTE: target_embedding is used by decoder, it transform the predicted id from the hidden_{t-1} to an embedding vector
   # and feed the embedding as the input_t to decoder.
   target_embedding = tf.keras.layers.Embedding(tgt_vocab_size, input_dims);
   if is_train == True:
     targets = tf.keras.Input((None, 1)); # targets.shape = (batch, ragged length, 1)
-    targets = tf.keras.layers.Lambda(lambda x: tf.squeeze(x, axis = -1))(targets); # targets.shape = (batch, ragged length)
-    target_tensors = target_embedding(targets); # target_tensors.shape = (batch, ragged length, input_dims)
+    squeezed_targets = tf.keras.layers.Lambda(lambda x: tf.squeeze(x, axis = -1))(targets); # targets.shape = (batch, ragged length)
+    target_tensors = target_embedding(squeezed_targets); # target_tensors.shape = (batch, ragged length, input_dims)
   # NOTE: because the tf.shape can't be used with ragged tensor, the batch is calculated this way
   batch = tf.keras.layers.Lambda(lambda x: tf.math.reduce_sum(tf.map_fn(lambda x: 1, x, fn_output_signature = tf.TensorSpec((), dtype = tf.int32))))(inputs); # batch.shape = ()
   # 1) encoder
