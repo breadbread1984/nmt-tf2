@@ -24,7 +24,7 @@ def Cell(unit_type = 'lstm', units = None, drop_rate = 0, forget_bias = False, r
 def NMT(src_vocab_size, tgt_vocab_size, input_dims, is_train = False, 
         encoder_params = {'enc_type': 'uni', 'unit_type': 'lstm', 'units': 32, 'drop_rate': 0.2, 'forget_bias': 1.0, 'use_residual': True, 'residual_layer_num': 1, 'layer_num': 2},
         decoder_params = {'unit_type': 'lstm', 'units': 32, 'drop_rate': 0.2, 'forget_bias': 1.0, 'use_residual': True, 'residual_layer_num': 1, 'layer_num': 2},
-        infer_params = {'infer_mode': 'beam_search', 'max_infer_len': None, 'beam_width': 0, 'start_token': 1, 'end_token': 2, 'length_penalty_weight': 0., 'coverage_penalty_weight': 0., 'softmax_temperature': 0.}):
+        infer_params = {'infer_mode': 'beam_search', 'max_infer_len': None, 'beam_width': 2, 'start_token': 1, 'end_token': 2, 'length_penalty_weight': 0., 'coverage_penalty_weight': 0., 'softmax_temperature': 0.}):
 
   assert infer_params['infer_mode'] in ['beam_search', 'sample', 'greedy'];
   if encoder_params['use_residual'] and encoder_params['layer_num'] > 1: encoder_params['residual_layer_num'] = encoder_params['layer_num'] - 1;
@@ -70,7 +70,6 @@ def NMT(src_vocab_size, tgt_vocab_size, input_dims, is_train = False,
     cells.append(Cell(decoder_params['unit_type'], decoder_params['units'], decoder_params['drop_rate'], decoder_params['forget_bias'], i >= decoder_params['layer_num'] - decoder_params['residual_layer_num']));
   # NOTE: decoder can't use bidirectional RNN, because the output length is unknown
   decoder_cell = tf.keras.layers.StackedRNNCells(cells);
-  # NOTE: decoder RNN -> dense -> softmax -> output ids
   output_layer = tf.keras.layers.Dense(tgt_vocab_size, use_bias = False);
   if is_train == True:
     sampler = tfa.seq2seq.TrainingSampler();
@@ -94,12 +93,13 @@ def NMT(src_vocab_size, tgt_vocab_size, input_dims, is_train = False,
   start_tokens = tf.keras.layers.Lambda(lambda x, s: tf.ones((x,), dtype = tf.int32) * s, arguments = {'s': infer_params['start_token']})(batch);
   if is_train == True:
     # NOTE: has target_tensors for supervision at training mode
-    target_length = tf.keras.layers.Lambda(lambda x: tf.map_fn(lambda x: tf.shape(x)[0], x))(targets);
+    target_length = tf.keras.layers.Lambda(lambda x: tf.map_fn(lambda x: tf.shape(x)[0], x))(targets); # target_length.shape = (batch)
     output, state, lengths = decoder(target_tensors, start_tokens = start_tokens, end_token = infer_params['end_token'], sequence_length = target_length, initial_state = (hidden, cell));
   else:
     # NOTE: no target_tensors for supervision at inference mode
     output, state, lengths = decoder(None, start_tokens = start_tokens, end_token = infer_params['end_token'], initial_state = (hidden, cell));
   # NOTE: rnn_output.shape = (batch, ragged length, tgt_vocab_size) predicted_ids.shape = (batch, beam_width)
+  # NOTE: rnn_output is the output of output_layer but output of RNN, this is specified in the document(https://tensorflow.google.cn/addons/api_docs/python/tfa/seq2seq/BasicDecoderOutput)
   return tf.keras.Model(inputs = (inputs, targets) if is_train == True else inputs, outputs = output.rnn_output if is_train == True or infer_params['infer_mode'] != 'beam_search' else output.predicted_ids);
 
 if __name__ == "__main__":
