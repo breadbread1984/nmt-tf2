@@ -91,8 +91,9 @@ def NMT(src_vocab_size, tgt_vocab_size, input_dims, is_train = False,
   batch = tf.keras.layers.Lambda(lambda x: tf.math.reduce_sum(tf.map_fn(lambda x: 1, x, fn_output_signature = tf.TensorSpec((), dtype = tf.int32))))(inputs); # batch.shape = ()
   # 1) encoder
   hidden_sequences, hidden, cell = Encoder(src_vocab_size, input_dims, encoder_params)(inputs); # hidden.shape = (batch, encoder_params['units']), cell.shape = (batch, encoder_params['units'])
-  # 2) decoder
+  # 2) decoder cell
   decoder_cell = DecoderCell(decoder_params);
+  # 3) decoder
   output_layer = tf.keras.layers.Dense(tgt_vocab_size, use_bias = False);
   if is_train == True:
     sampler = tfa.seq2seq.TrainingSampler();
@@ -151,17 +152,20 @@ def AttentionModel(src_vocab_size, tgt_vocab_size, input_dims, is_train = False,
   # NOTE: because the tf.shape can't be used with ragged tensor, the batch is calculated this way
   batch = tf.keras.layers.Lambda(lambda x: tf.math.reduce_sum(tf.map_fn(lambda x: 1, x, fn_output_signature = tf.TensorSpec((), dtype = tf.int32))))(inputs); # batch.shape = ()
   # 1) encoder
+  
   hidden_sequences, hidden, cell = Encoder(src_vocab_size, input_dims, encoder_params)(inputs);
-  # 2) decoder
+  # 2) decoder cell
   input_lengths = tf.keras.layers.Lambda(lambda x: tf.map_fn(lambda x: tf.shape(x)[0], x, fn_output_signature = tf.TensorSpec((), dtype = tf.int32)))(inputs); # input_lengths.shape = (batch)
   decoder_cell = DecoderCell(decoder_params);
+  # 3) attention decoder cell
   if attention_params['attention_mode'] in ['luong', 'scaled_luong']:
     attention_fn = tfa.seq2seq.LuongAttention(attention_params['units'], hidden_sequences, input_lengths, scale = True if attention_params['attention_mode'] == 'scaled_luong' else False);
   elif attention_params['attention_mode'] in ['bahdanau', 'normed_bahdanau']:
     attention_fn = tfa.seq2seq.BahdanauAttention(attention_params['units'], hidden_sequences, input_lengths, normalize = True if attention_params['attention_mode'] == 'normed_bahdanau' else False);
   else:
     raise 'unknown attention mechanism!';
-  attention_decoder_cell = tfa.seq2seq.AttentionWrapper(decoder_cell, attention_fn, attention_params['units'], is_train == False and infer_params['infer_mode'] != 'beam_search', attention_params['output_attention']);
+  decoder_cell = tfa.seq2seq.AttentionWrapper(decoder_cell, attention_fn, attention_params['units'], is_train == False and infer_params['infer_mode'] != 'beam_search', attention_params['output_attention']);
+  # 4) decoder
   output_layer = tf.keras.layers.Dense(tgt_vocab_size, use_bias = False);
   
 
