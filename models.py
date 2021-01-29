@@ -21,27 +21,17 @@ def Cell(unit_type = 'lstm', units = None, drop_rate = 0, forget_bias = False, r
     cell = tf.nn.RNNCellResidualWrapper(cell);
   return cell;  
 
-def NMT(src_vocab_size, tgt_vocab_size, input_dims, is_train = False, 
-        encoder_params = {'enc_type': 'uni', 'unit_type': 'lstm', 'units': 32, 'drop_rate': 0.2, 'forget_bias': 1.0, 'use_residual': True, 'residual_layer_num': 1, 'layer_num': 2},
-        decoder_params = {'unit_type': 'lstm', 'units': 32, 'drop_rate': 0.2, 'forget_bias': 1.0, 'use_residual': True, 'residual_layer_num': 1, 'layer_num': 2},
-        infer_params = {'infer_mode': 'beam_search', 'start_token': 1, 'end_token': 2, 'max_infer_len': None, 'beam_width': 2, 'length_penalty_weight': 0., 'coverage_penalty_weight': 0., 'softmax_temperature': 0.}):
+def Encoder(src_vocab_size, input_dims, encoder_params = {'enc_type': 'uni', 'unit_type': 'lstm', 'units': 32, 'drop_rate': 0.2, 'forget_bias': 1.0, 'use_residual': True, 'residual_layer_num': 1, 'layer_num': 2}):
 
-  assert infer_params['infer_mode'] in ['beam_search', 'sample', 'greedy'];
+  # NOTE: this is the commonly used encoder cross the nmt models
+  assert encoder_params['enc_type'] in ['uni', 'bi'];
+  assert encoder_params['unit_type'] in ['lstm','gru','layer_norm_lstm','nas'];
   if encoder_params['use_residual'] and encoder_params['layer_num'] > 1: encoder_params['residual_layer_num'] = encoder_params['layer_num'] - 1;
-  if decoder_params['use_residual'] and decoder_params['layer_num'] > 1: decoder_params['residual_layer_num'] = decoder_params['layer_num'] - 1;
-
   inputs = tf.keras.Input((None, 1), ragged = True); # inputs.shape = (batch, ragged length, 1)
   squeezed_inputs = tf.keras.layers.Lambda(lambda x: tf.squeeze(x, axis = -1))(inputs); # inputs.shape = (batch, ragged length)
   input_tensors = tf.keras.layers.Embedding(src_vocab_size, input_dims)(squeezed_inputs); # input_tensors.shape = (batch, ragged length, input_dims)
-  # NOTE: target_embedding is used by decoder, it transform the predicted id from the hidden_{t-1} to an embedding vector
-  # and feed the embedding as the input_t to decoder.
-  target_embedding = tf.keras.layers.Embedding(tgt_vocab_size, input_dims);
-  if is_train == True:
-    targets = tf.keras.Input((None, 1)); # targets.shape = (batch, ragged length, 1)
-    squeezed_targets = tf.keras.layers.Lambda(lambda x: tf.squeeze(x, axis = -1))(targets); # targets.shape = (batch, ragged length)
-    target_tensors = target_embedding(squeezed_targets); # target_tensors.shape = (batch, ragged length, input_dims)
   # NOTE: because the tf.shape can't be used with ragged tensor, the batch is calculated this way
-  batch = tf.keras.layers.Lambda(lambda x: tf.math.reduce_sum(tf.map_fn(lambda x: 1, x, fn_output_signature = tf.TensorSpec((), dtype = tf.int32))))(inputs); # batch.shape = ()
+  batch = tf.keras.layers.Lambda(lambda x: x.nrows())(inputs); # batch.shape = ()
   # 1) encoder
   if encoder_params['enc_type'] == 'uni':
     cells = list();
@@ -66,6 +56,39 @@ def NMT(src_vocab_size, tgt_vocab_size, input_dims, is_train = False,
     cell = tf.keras.layers.Concatenate(axis = -1)([forward_cell, backward_cell]); # cell.shape = (batch, units * 2)
   else:
     raise 'unknown encoder type!';
+  return tf.keras.Model(inputs = inputs, outputs = (hidden, cell));
+
+def DecoderCell(decoder_params = {'unit_type': 'lstm', 'units': 32, 'drop_rate': 0.2, 'forget_bias': 1.0, 'use_residual': True, 'residual_layer_num': 1, 'layer_num': 2}):
+  
+  cells = list();
+  for i in range(decoder_params['layer_num']):
+    # NOTE: cells over certain layer use residual structure to prevent gradient vanishing
+    cells.append(Cell(decoder_params['unit_type'], decoder_params['units'], decoder_params['drop_rate'], decoder_params['forget_bias'], i >= decoder_params['layer_num'] - decoder_params['residual_layer_num']));
+  # NOTE: decoder can't use bidirectional RNN, because the output length is unknown
+  decoder_cell = tf.keras.layers.StackedRNNCells(cells);
+  return decoder_cell;
+
+def NMT(src_vocab_size, tgt_vocab_size, input_dims, is_train = False, 
+        encoder_params = {'enc_type': 'uni', 'unit_type': 'lstm', 'units': 32, 'drop_rate': 0.2, 'forget_bias': 1.0, 'use_residual': True, 'residual_layer_num': 1, 'layer_num': 2},
+        decoder_params = {'unit_type': 'lstm', 'units': 32, 'drop_rate': 0.2, 'forget_bias': 1.0, 'use_residual': True, 'residual_layer_num': 1, 'layer_num': 2},
+        infer_params = {'infer_mode': 'beam_search', 'start_token': 1, 'end_token': 2, 'max_infer_len': None, 'beam_width': 2, 'length_penalty_weight': 0., 'coverage_penalty_weight': 0., 'softmax_temperature': 0.}):
+
+  assert decoder_params['unit_type'] in ['lstm','gru','layer_norm_lstm','nas'];
+  assert infer_params['infer_mode'] in ['beam_search', 'sample', 'greedy'];
+  if decoder_params['use_residual'] and decoder_params['layer_num'] > 1: decoder_params['residual_layer_num'] = decoder_params['layer_num'] - 1;
+
+  inputs = tf.keras.Input((None, 1), ragged = True); # inputs.shape = (batch, ragged length, 1)  
+  # NOTE: target_embedding is used by decoder, it transform the predicted id from the hidden_{t-1} to an embedding vector
+  # and feed the embedding as the input_t to decoder.
+  target_embedding = tf.keras.layers.Embedding(tgt_vocab_size, input_dims);
+  if is_train == True:
+    targets = tf.keras.Input((None, 1)); # targets.shape = (batch, ragged length, 1)
+    squeezed_targets = tf.keras.layers.Lambda(lambda x: tf.squeeze(x, axis = -1))(targets); # targets.shape = (batch, ragged length)
+    target_tensors = target_embedding(squeezed_targets); # target_tensors.shape = (batch, ragged length, input_dims)
+  # NOTE: because the tf.shape can't be used with ragged tensor, the batch is calculated this way
+  batch = tf.keras.layers.Lambda(lambda x: tf.math.reduce_sum(tf.map_fn(lambda x: 1, x, fn_output_signature = tf.TensorSpec((), dtype = tf.int32))))(inputs); # batch.shape = ()
+  # 1) encoder
+  hidden, cell = Encoder(src_vocab_size, input_dims, encoder_params)(inputs);
   # 2) decoder
   cells = list();
   for i in range(decoder_params['layer_num']):
@@ -104,6 +127,52 @@ def NMT(src_vocab_size, tgt_vocab_size, input_dims, is_train = False,
   # NOTE: rnn_output.shape = (batch, ragged length, tgt_vocab_size) predicted_ids.shape = (batch, beam_width)
   # NOTE: rnn_output is the output of output_layer but output of RNN, this is specified in the document(https://tensorflow.google.cn/addons/api_docs/python/tfa/seq2seq/BasicDecoderOutput)
   return tf.keras.Model(inputs = (inputs, targets) if is_train == True else inputs, outputs = output.rnn_output if is_train == True or infer_params['infer_mode'] != 'beam_search' else output.predicted_ids);
+
+def AttentionModel(src_vocab_size, tgt_vocab_size, input_dims, is_train = False,
+                   encoder_params = {'enc_type': 'uni', 'unit_type': 'lstm', 'units': 32, 'drop_rate': 0.2, 'forget_bias': 1.0, 'use_residual': True, 'residual_layer_num': 1, 'layer_num': 2},
+                   decoder_params = {'unit_type': 'lstm', 'units': 32, 'drop_rate': 0.2, 'forget_bias': 1.0, 'use_residual': True, 'residual_layer_num': 1, 'layer_num': 2},
+                   attention_params = {'attention_architecture': 'standard', }):
+  
+  assert decoder_params['unit_type'] in ['lstm','gru','layer_norm_lstm','nas'];
+  assert infer_params['infer_mode'] in ['beam_search', 'sample', 'greedy'];
+  if decoder_params['use_residual'] and decoder_params['layer_num'] > 1: decoder_params['residual_layer_num'] = decoder_params['layer_num'] - 1;
+
+  inputs = tf.keras.Input((None, 1), ragged = True); # inputs.shape = (batch, ragged length, 1)
+  # NOTE: target_embedding is used by decoder, it transform the predicted id from the hidden_{t-1} to an embedding vector
+  # and feed the embedding as the input_t to decoder.
+  target_embedding = tf.keras.layers.Embedding(tgt_vocab_size, input_dims);
+  if is_train == True:
+    targets = tf.keras.Input((None, 1)); # targets.shape = (batch, ragged length, 1)
+    squeezed_targets = tf.keras.layers.Lambda(lambda x: tf.squeeze(x, axis = -1))(targets); # targets.shape = (batch, ragged length)
+    target_tensors = target_embedding(squeezed_targets); # target_tensors.shape = (batch, ragged length, input_dims)
+  # NOTE: because the tf.shape can't be used with ragged tensor, the batch is calculated this way
+  batch = tf.keras.layers.Lambda(lambda x: tf.math.reduce_sum(tf.map_fn(lambda x: 1, x, fn_output_signature = tf.TensorSpec((), dtype = tf.int32))))(inputs); # batch.shape = ()
+  # 1) encoder
+  hidden, cell = Encoder(src_vocab_size, input_dims, encoder_params)(inputs);
+  # 2) decoder
+  
+
+def GNMT(src_vocab_size, tgt_vocab_size, input_dims, is_train = False,
+         encoder_params = {'enc_type': 'uni', 'unit_type': 'lstm', 'units': 32, 'drop_rate': 0.2, 'forget_bias': 1.0, 'use_residual': True, 'residual_layer_num': 1, 'layer_num': 2},
+         decoder_params = {'unit_type': 'lstm', 'units': 32, 'drop_rate': 0.2, 'forget_bias': 1.0, 'use_residual': True, 'residual_layer_num': 1, 'layer_num': 2}):
+  
+  assert decoder_params['unit_type'] in ['lstm','gru','layer_norm_lstm','nas'];
+  assert infer_params['infer_mode'] in ['beam_search', 'sample', 'greedy'];
+  if decoder_params['use_residual'] and decoder_params['layer_num'] > 1: decoder_params['residual_layer_num'] = decoder_params['layer_num'] - 1;
+
+  inputs = tf.keras.Input((None, 1), ragged = True); # inputs.shape = (batch, ragged length, 1)
+  # NOTE: target_embedding is used by decoder, it transform the predicted id from the hidden_{t-1} to an embedding vector
+  # and feed the embedding as the input_t to decoder.
+  target_embedding = tf.keras.layers.Embedding(tgt_vocab_size, input_dims);
+  if is_train == True:
+    targets = tf.keras.Input((None, 1)); # targets.shape = (batch, ragged length, 1)
+    squeezed_targets = tf.keras.layers.Lambda(lambda x: tf.squeeze(x, axis = -1))(targets); # targets.shape = (batch, ragged length)
+    target_tensors = target_embedding(squeezed_targets); # target_tensors.shape = (batch, ragged length, input_dims)
+  # NOTE: because the tf.shape can't be used with ragged tensor, the batch is calculated this way
+  batch = tf.keras.layers.Lambda(lambda x: tf.math.reduce_sum(tf.map_fn(lambda x: 1, x, fn_output_signature = tf.TensorSpec((), dtype = tf.int32))))(inputs); # batch.shape = ()
+  # 1) encoder
+  hidden, cell = Encoder(src_vocab_size, input_dims, encoder_params)(inputs);
+  # 2) decoder
 
 if __name__ == "__main__":
   
