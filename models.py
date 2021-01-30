@@ -99,7 +99,7 @@ def Decoder(inputs, targets, hidden, cell, decoder_cell, tgt_vocab_size, input_d
         maximum_iterations = tf.keras.layers.Lambda(lambda x: 2 * tf.math.reduce_max(tf.map_fn(lambda x: tf.shape(x)[0], x, fn_output_signature = tf.TensorSpec((), dtype = tf.int32))))(inputs); # max_infer_length = (batch)
       decoder = tfa.seq2seq.BasicDecoder(decoder_cell, sampler, output_layer, maximum_iterations = maximum_iterations);
   # NOTE: attention wrapper as decoder cell require different type of initial state (AttentionWrapperState)
-  batch = tf.keras.layers.Lambda(lambda x: x.nrows())(inputs); # batch.shape = ()
+  batch = tf.keras.layers.Lambda(lambda x: tf.cast(x.nrows(), dtype = tf.int32))(inputs); # batch.shape = ()
   initial_state = decoder_cell.get_initial_state(batch_size = batch, dtype = tf.float32).clone((hidden, cell)) if type(decoder_cell) is tfa.seq2seq.AttentionWrapper else (hidden, cell);
   if is_train == True:
     # NOTE: has target_tensors for supervision at training mode
