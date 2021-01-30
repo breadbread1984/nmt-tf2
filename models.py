@@ -137,6 +137,7 @@ def NMT(src_vocab_size, tgt_vocab_size, input_dims, is_train = False,
         decoder_params = {'unit_type': 'lstm', 'units': 32, 'drop_rate': 0.2, 'forget_bias': 1.0, 'use_residual': True, 'residual_layer_num': 1, 'layer_num': 2},
         infer_params = {'infer_mode': 'beam_search', 'start_token': 1, 'end_token': 2, 'max_infer_len': None, 'beam_width': 2, 'length_penalty_weight': 0., 'coverage_penalty_weight': 0., 'softmax_temperature': 0.}):
 
+  assert encoder_params['enc_type'] not in ['gnmt', 'gnmt_v2'];
   if decoder_params['use_residual'] and decoder_params['layer_num'] > 1: decoder_params['residual_layer_num'] = decoder_params['layer_num'] - 1;
 
   inputs = tf.keras.Input((None, 1), ragged = True); # inputs.shape = (batch, ragged length, 1)  
@@ -183,13 +184,12 @@ def AttentionModel(src_vocab_size, tgt_vocab_size, input_dims, is_train = False,
     attention_fn = tfa.seq2seq.BahdanauAttention(units = attention_params['units'], memory = hidden_sequences, memory_sequence_length = input_lengths, normalize = True if attention_params['attention_mode'] == 'normed_bahdanau' else False);
   else:
     raise 'unknown attention mechanism!';
-  if encoder_params['enc_type'] not in ['gnmt', 'gnmt_v2']:
-    decoder_cell = tfa.seq2seq.AttentionWrapper(decoder_cell, attention_fn, attention_params['units'], alignment_history = is_train == False and infer_params['infer_mode'] != 'beam_search', output_attention = attention_params['output_attention']);
-  elif encoder_params['enc_type'] == 'gnmt':
-    # TODO:
+  decoder_cell = tfa.seq2seq.AttentionWrapper(decoder_cell, attention_fn, attention_params['units'], alignment_history = is_train == False and infer_params['infer_mode'] != 'beam_search', output_attention = attention_params['output_attention']);
+  if encoder_params['enc_type'] == 'gnmt':
+    # TODO: wrap decoder cell again
     # NOTE: use gnmt residual function
   elif encoder_params['enc_type'] == 'gnmt_v2':
-    # TODO
+    # TODO: wrap decoder cell again
     # NOTE: use gnmt residual function
   # 4) decoder
   output = Decoder(inputs, targets if is_train == True else None, hidden, cell, decoder_cell, tgt_vocab_size, input_dims, is_train, infer_params);
