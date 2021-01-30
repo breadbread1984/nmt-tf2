@@ -179,8 +179,6 @@ def GNMT(src_vocab_size, tgt_vocab_size, input_dims, is_train = False,
          encoder_params = {'enc_type': 'uni', 'unit_type': 'lstm', 'units': 32, 'drop_rate': 0.2, 'forget_bias': 1.0, 'use_residual': True, 'residual_layer_num': 1, 'layer_num': 2},
          decoder_params = {'unit_type': 'lstm', 'units': 32, 'drop_rate': 0.2, 'forget_bias': 1.0, 'use_residual': True, 'residual_layer_num': 1, 'layer_num': 2}):
   
-  assert decoder_params['unit_type'] in ['lstm','gru','layer_norm_lstm','nas'];
-  assert infer_params['infer_mode'] in ['beam_search', 'sample', 'greedy'];
   if decoder_params['use_residual'] and decoder_params['layer_num'] > 1: decoder_params['residual_layer_num'] = decoder_params['layer_num'] - 1;
 
   inputs = tf.keras.Input((None, 1), ragged = True); # inputs.shape = (batch, ragged length, 1)
@@ -205,14 +203,12 @@ if __name__ == "__main__":
   infer_params = {'infer_mode': 'beam_search', 'start_token': 1, 'end_token': 2, 'max_infer_len': None, 'beam_width': 2, 'length_penalty_weight': 0., 'coverage_penalty_weight': 0.};
   nmt = NMT(100, 200, 64, infer_params = infer_params);
   nmt.save('nmt_infer_beamsearch.h5');
-  '''
   infer_params = {'infer_mode': 'sample', 'start_token': 1, 'end_token': 2, 'max_infer_len': None, 'softmax_temperature': 0.};
   nmt = NMT(100, 200, 64, infer_params = infer_params);
   nmt.save('nmt_infer_sample.h5');
   infer_params = {'infer_mode': 'greedy', 'start_token': 1, 'end_token': 2, 'max_infer_len': None};
   nmt = NMT(100, 200, 64, infer_params = infer_params);
   nmt.save('nmt_infer_greedy.h5');
-  '''
   att_nmt = AttentionModel(100, 200, 64, is_train = True);
   att_nmt.save('att_nmt_train.h5');
   infer_params = {'infer_mode': 'beam_search', 'start_token': 1, 'end_token': 2, 'max_infer_len': None, 'beam_width': 2, 'length_penalty_weight': 0., 'coverage_penalty_weight': 0.};
