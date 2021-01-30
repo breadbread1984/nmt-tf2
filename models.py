@@ -71,7 +71,7 @@ def DecoderCell(decoder_params = {'unit_type': 'lstm', 'units': 32, 'drop_rate':
   decoder_cell = tf.keras.layers.StackedRNNCells(cells);
   return decoder_cell;
 
-def Decoder(targets, hidden, cell, decoder_cell, tgt_vocab_size, input_dims, is_train = False,
+def Decoder(inputs, targets, hidden, cell, decoder_cell, tgt_vocab_size, input_dims, is_train = False,
             infer_params = {'infer_mode': 'beam_search', 'start_token': 1, 'end_token': 2, 'max_infer_len': None, 'beam_width': 2, 'length_penalty_weight': 0., 'coverage_penalty_weight': 0., 'softmax_temperature': 0.}):
 
   assert infer_params['infer_mode'] in ['beam_search', 'sample', 'greedy'];
@@ -102,9 +102,10 @@ def Decoder(targets, hidden, cell, decoder_cell, tgt_vocab_size, input_dims, is_
   if is_train == True:
     # NOTE: has target_tensors for supervision at training mode
     target_length = tf.keras.layers.Lambda(lambda x: tf.map_fn(lambda x: tf.shape(x)[0], x, fn_output_signature = tf.TensorSpec((), dtype = tf.int32)))(targets); # target_length.shape = (batch)
+    target_tensors = tf.keras.layers.Lambda(lambda x: x.to_tensor())(target_tensors);
     output, state, lengths = decoder(target_tensors, sequence_length = target_length, initial_state = (hidden, cell));
   else:
-    start_tokens = tf.keras.layers.Lambda(lambda x, s: tf.ones((x,), dtype = tf.int32) * s, arguments = {'s': infer_params['start_token']})(batch);
+    start_tokens = tf.keras.layers.Lambda(lambda x, s: tf.ones((tf.shape(x)[0],), dtype = tf.int32) * s, arguments = {'s': infer_params['start_token']})(hidden);
     # NOTE: no target_tensors for supervision at inference mode
     # NOTE: beam search decoder need initial state be multipled on batch dimension
     if infer_params['infer_mode'] == 'beam_search':
@@ -129,14 +130,12 @@ def NMT(src_vocab_size, tgt_vocab_size, input_dims, is_train = False,
   target_embedding = tf.keras.layers.Embedding(tgt_vocab_size, input_dims);
   if is_train == True:
     targets = tf.keras.Input((None, 1), ragged = True); # targets.shape = (batch, ragged length, 1)
-  # NOTE: because the tf.shape can't be used with ragged tensor, the batch is calculated this way
-  batch = tf.keras.layers.Lambda(lambda x: tf.math.reduce_sum(tf.map_fn(lambda x: 1, x, fn_output_signature = tf.TensorSpec((), dtype = tf.int32))))(inputs); # batch.shape = ()
   # 1) encoder
   hidden_sequences, hidden, cell = Encoder(src_vocab_size, input_dims, encoder_params)(inputs); # hidden.shape = (batch, encoder_params['units']), cell.shape = (batch, encoder_params['units'])
   # 2) decoder cell
   decoder_cell = DecoderCell(decoder_params);
   # 3) decoder
-  output = Decoder(targets, hidden, cell, decoder_cell, tgt_vocab_size, input_dims, is_train, infer_params);
+  output = Decoder(inputs, targets if is_train == True else None, hidden, cell, decoder_cell, tgt_vocab_size, input_dims, is_train, infer_params);
   return tf.keras.Model(inputs = (inputs, targets) if is_train == True else inputs, outputs = output.rnn_output if is_train == True or infer_params['infer_mode'] != 'beam_search' else output.predicted_ids);
 
 def AttentionModel(src_vocab_size, tgt_vocab_size, input_dims, is_train = False,
