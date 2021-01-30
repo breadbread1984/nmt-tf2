@@ -25,7 +25,7 @@ def Encoder(src_vocab_size, input_dims, encoder_params = {'enc_type': 'uni', 'un
 
   # NOTE: this is a building block for NMT, ATTENTIONMODEL and GNMT
   # NOTE: this is the commonly used encoder cross the nmt models
-  assert encoder_params['enc_type'] in ['uni', 'bi'];
+  assert encoder_params['enc_type'] in ['uni', 'bi', 'gnmt'];
   assert encoder_params['unit_type'] in ['lstm','gru','layer_norm_lstm','nas'];
   if encoder_params['use_residual'] and encoder_params['layer_num'] > 1: encoder_params['residual_layer_num'] = encoder_params['layer_num'] - 1;
   inputs = tf.keras.Input((None, 1), ragged = True); # inputs.shape = (batch, ragged length, 1)
@@ -44,16 +44,29 @@ def Encoder(src_vocab_size, input_dims, encoder_params = {'enc_type': 'uni', 'un
     residual_layer_num = floor(encoder_params['residual_layer_num'] / 2);
     forward_cells = list();
     backward_cells = list();
-    for i in range(encoder_params['layer_num']):
+    for i in range(layer_num):
       # NOTE: cells over certain layer use residual structure to prevent gradient vanishing
-      forward_cells.append(Cell(encoder_params['unit_type'], encoder_params['units'], encoder_params['drop_rate'], encoder_params['forget_bias'], i >= encoder_params['layer_num'] - encoder_params['residual_layer_num']));
-      backward_cells.append(Cell(encoder_params['unit_type'], encoder_params['units'], encoder_params['drop_rate'], encoder_params['forget_bias'], i >= encoder_params['layer_num'] - encoder_params['residual_layer_num']));
+      forward_cells.append(Cell(encoder_params['unit_type'], encoder_params['units'], encoder_params['drop_rate'], encoder_params['forget_bias'], i >= layer_num - residual_layer_num));
+      backward_cells.append(Cell(encoder_params['unit_type'], encoder_params['units'], encoder_params['drop_rate'], encoder_params['forget_bias'], i >= layer_num - residual_layer_num));
     hidden_sequences, forward_hidden, forward_cell, backward_hidden, backward_cell = tf.keras.layers.Bidirectional(
       layer = tf.keras.layers.RNN(forward_cells, return_sequences = True, return_state = True),
       backward_layer = tf.keras.layers.RNN(backward_cells, return_sequences = True, return_state = True, go_backwards = True),
       merge_mode = 'concat')(input_tensors); # results = (concated hidden, forward hidden, forward cell, backward hidden, backward cell)
     hidden = tf.keras.layers.Concatenate(axis = -1)([forward_hidden, backward_hidden]); # hidden.shape = (batch, units * 2)
     cell = tf.keras.layers.Concatenate(axis = -1)([forward_cell, backward_cell]); # cell.shape = (batch, units * 2)
+  elif encoder_params['enc_type'] in ['gnmt', 'gnmt_v2']:
+    # 1 layer bidirectional RNN
+    # NOTE: cell use no residual structure
+    hidden_sequences, forward_hidden, forward_cell, backward_hidden, backward_cell = tf.keras.layers.Bidirectional(
+      layer = tf.keras.layers.RNN(Cell(encoder_params['unit_type'], encoder_params['units'], encoder_params['drop_rate'], encoder_params['forget_bias'], False), return_sequences = True, return_state = True),
+      backward_layer = tf.keras.layers.RNN(Cell(encoder_params['unit_type'], encoder_params['units'], encoder_params['drop_rate'], encoder_params['forget_bias'], False), return_sequences = True, return_state = True, go_backwards = True),
+      merge_mode = 'concat')(input_tensors); # results = (concated hidden, forward hidden, forward cell, backward hidden, backward cell)
+    # encoder_params['layer_num'] - 1 layer unidirectional RNN
+    cells = list();
+    for i in range(encoder_params['layer_num'] - 1):
+      # NOTE: cells over certain layer use residual structure to prevent gradient vanishing
+      cells.append(Cell(encoder_params['unit_type'], encoder_params['units'], encoder_params['drop_rate'], encoder_params['forget_bias'], i >= encoder_params['layer_num'] - 1 - encoder_params['residual_layer_num']));
+    hidden_sequences, hidden, cell = tf.keras.layers.RNN(cells, return_sequences = True, return_state = True)(hidden_sequences); # hidden.shape = (batch, units) cell.shape = (batch, units)
   else:
     raise 'unknown encoder type!';
   return tf.keras.Model(inputs = inputs, outputs = (hidden_sequences, hidden, cell));
@@ -170,30 +183,17 @@ def AttentionModel(src_vocab_size, tgt_vocab_size, input_dims, is_train = False,
     attention_fn = tfa.seq2seq.BahdanauAttention(units = attention_params['units'], memory = hidden_sequences, memory_sequence_length = input_lengths, normalize = True if attention_params['attention_mode'] == 'normed_bahdanau' else False);
   else:
     raise 'unknown attention mechanism!';
-  decoder_cell = tfa.seq2seq.AttentionWrapper(decoder_cell, attention_fn, attention_params['units'], alignment_history = is_train == False and infer_params['infer_mode'] != 'beam_search', output_attention = attention_params['output_attention']);
+  if encoder_params['enc_type'] not in ['gnmt', 'gnmt_v2']:
+    decoder_cell = tfa.seq2seq.AttentionWrapper(decoder_cell, attention_fn, attention_params['units'], alignment_history = is_train == False and infer_params['infer_mode'] != 'beam_search', output_attention = attention_params['output_attention']);
+  elif encoder_params['enc_type'] == 'gnmt':
+    # TODO:
+    # NOTE: use gnmt residual function
+  elif encoder_params['enc_type'] == 'gnmt_v2':
+    # TODO
+    # NOTE: use gnmt residual function
   # 4) decoder
   output = Decoder(inputs, targets if is_train == True else None, hidden, cell, decoder_cell, tgt_vocab_size, input_dims, is_train, infer_params);
   return tf.keras.Model(inputs = (inputs, targets) if is_train == True else inputs, outputs = output.rnn_output if is_train == True or infer_params['infer_mode'] != 'beam_search' else output.predicted_ids);
-
-def GNMT(src_vocab_size, tgt_vocab_size, input_dims, is_train = False,
-         encoder_params = {'enc_type': 'uni', 'unit_type': 'lstm', 'units': 32, 'drop_rate': 0.2, 'forget_bias': 1.0, 'use_residual': True, 'residual_layer_num': 1, 'layer_num': 2},
-         decoder_params = {'unit_type': 'lstm', 'units': 32, 'drop_rate': 0.2, 'forget_bias': 1.0, 'use_residual': True, 'residual_layer_num': 1, 'layer_num': 2}):
-  
-  if decoder_params['use_residual'] and decoder_params['layer_num'] > 1: decoder_params['residual_layer_num'] = decoder_params['layer_num'] - 1;
-
-  inputs = tf.keras.Input((None, 1), ragged = True); # inputs.shape = (batch, ragged length, 1)
-  # NOTE: target_embedding is used by decoder, it transform the predicted id from the hidden_{t-1} to an embedding vector
-  # and feed the embedding as the input_t to decoder.
-  target_embedding = tf.keras.layers.Embedding(tgt_vocab_size, input_dims);
-  if is_train == True:
-    targets = tf.keras.Input((None, 1), ragged = True); # targets.shape = (batch, ragged length, 1)
-    squeezed_targets = tf.keras.layers.Lambda(lambda x: tf.squeeze(x, axis = -1))(targets); # targets.shape = (batch, ragged length)
-    target_tensors = target_embedding(squeezed_targets); # target_tensors.shape = (batch, ragged length, input_dims)
-  # 1) encoder
-  hidden_sequences, hidden, cell = Encoder(src_vocab_size, input_dims, encoder_params)(inputs);
-  # 2) decoder
-  decoder_cell = DecoderCell(decoder_params);
-  # 3) 
 
 if __name__ == "__main__":
 
