@@ -32,7 +32,6 @@ def Encoder(src_vocab_size, input_dims, encoder_params = {'enc_type': 'uni', 'un
   squeezed_inputs = tf.keras.layers.Lambda(lambda x: tf.squeeze(x, axis = -1))(inputs); # inputs.shape = (batch, ragged length)
   input_tensors = tf.keras.layers.Embedding(src_vocab_size, input_dims)(squeezed_inputs); # input_tensors.shape = (batch, ragged length, input_dims)
   # NOTE: because the tf.shape can't be used with ragged tensor, the batch is calculated this way
-  batch = tf.keras.layers.Lambda(lambda x: x.nrows())(inputs); # batch.shape = ()
   # 1) encoder
   if encoder_params['enc_type'] == 'uni':
     cells = list();
@@ -99,11 +98,14 @@ def Decoder(inputs, targets, hidden, cell, decoder_cell, tgt_vocab_size, input_d
       else:
         maximum_iterations = tf.keras.layers.Lambda(lambda x: 2 * tf.math.reduce_max(tf.map_fn(lambda x: tf.shape(x)[0], x, fn_output_signature = tf.TensorSpec((), dtype = tf.int32))))(inputs); # max_infer_length = (batch)
       decoder = tfa.seq2seq.BasicDecoder(decoder_cell, sampler, output_layer, maximum_iterations = maximum_iterations);
+  # NOTE: attention wrapper as decoder cell require different type of initial state (AttentionWrapperState)
+  batch = tf.keras.layers.Lambda(lambda x: x.nrows())(inputs); # batch.shape = ()
+  initial_state = decoder_cell.get_initial_state(batch_size = batch, dtype = tf.float32).clone((hidden, cell)) if type(decoder_cell) is tfa.seq2seq.AttentionWrapper else (hidden, cell);
   if is_train == True:
     # NOTE: has target_tensors for supervision at training mode
     target_length = tf.keras.layers.Lambda(lambda x: tf.map_fn(lambda x: tf.shape(x)[0], x, fn_output_signature = tf.TensorSpec((), dtype = tf.int32)))(targets); # target_length.shape = (batch)
     target_tensors = tf.keras.layers.Lambda(lambda x: x.to_tensor())(target_tensors);
-    output, state, lengths = decoder(target_tensors, sequence_length = target_length, initial_state = (hidden, cell));
+    output, state, lengths = decoder(target_tensors, sequence_length = target_length, initial_state = initial_state);
   else:
     start_tokens = tf.keras.layers.Lambda(lambda x, s: tf.ones((tf.shape(x)[0],), dtype = tf.int32) * s, arguments = {'s': infer_params['start_token']})(hidden);
     # NOTE: no target_tensors for supervision at inference mode
@@ -112,7 +114,7 @@ def Decoder(inputs, targets, hidden, cell, decoder_cell, tgt_vocab_size, input_d
       hidden, cell = tfa.seq2seq.tile_batch((hidden, cell), infer_params['beam_width']);
       # hidden.shape = (batch * infer_params['beam_width'], encoder_params['units'])
       # cell.shape = (batch * infer_params['beam_width'], encoder_params['units'])
-    output, state, lengths = decoder(None, start_tokens = start_tokens, end_token = infer_params['end_token'], initial_state = (hidden, cell));
+    output, state, lengths = decoder(None, start_tokens = start_tokens, end_token = infer_params['end_token'], initial_state = initial_state);
   # NOTE: rnn_output.shape = (batch, ragged length, tgt_vocab_size) predicted_ids.shape = (batch, beam_width)
   # NOTE: rnn_output is the output of output_layer but output of RNN, this is specified in the document(https://tensorflow.google.cn/addons/api_docs/python/tfa/seq2seq/BasicDecoderOutput)
   return output;
@@ -155,8 +157,6 @@ def AttentionModel(src_vocab_size, tgt_vocab_size, input_dims, is_train = False,
     targets = tf.keras.Input((None, 1), ragged = True); # targets.shape = (batch, ragged length, 1)
     squeezed_targets = tf.keras.layers.Lambda(lambda x: tf.squeeze(x, axis = -1))(targets); # targets.shape = (batch, ragged length)
     target_tensors = target_embedding(squeezed_targets); # target_tensors.shape = (batch, ragged length, input_dims)
-  # NOTE: because the tf.shape can't be used with ragged tensor, the batch is calculated this way
-  batch = tf.keras.layers.Lambda(lambda x: tf.math.reduce_sum(tf.map_fn(lambda x: 1, x, fn_output_signature = tf.TensorSpec((), dtype = tf.int32))))(inputs); # batch.shape = ()
   # 1) encoder
   hidden_sequences, hidden, cell = Encoder(src_vocab_size, input_dims, encoder_params)(inputs);
   # 2) decoder cell
@@ -191,8 +191,6 @@ def GNMT(src_vocab_size, tgt_vocab_size, input_dims, is_train = False,
     targets = tf.keras.Input((None, 1), ragged = True); # targets.shape = (batch, ragged length, 1)
     squeezed_targets = tf.keras.layers.Lambda(lambda x: tf.squeeze(x, axis = -1))(targets); # targets.shape = (batch, ragged length)
     target_tensors = target_embedding(squeezed_targets); # target_tensors.shape = (batch, ragged length, input_dims)
-  # NOTE: because the tf.shape can't be used with ragged tensor, the batch is calculated this way
-  batch = tf.keras.layers.Lambda(lambda x: tf.math.reduce_sum(tf.map_fn(lambda x: 1, x, fn_output_signature = tf.TensorSpec((), dtype = tf.int32))))(inputs); # batch.shape = ()
   # 1) encoder
   hidden_sequences, hidden, cell = Encoder(src_vocab_size, input_dims, encoder_params)(inputs);
   # 2) decoder
