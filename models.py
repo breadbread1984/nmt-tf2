@@ -160,10 +160,10 @@ def AttentionModel(src_vocab_size, tgt_vocab_size, input_dims, is_train = False,
   # 1) encoder
   hidden_sequences, hidden, cell = Encoder(src_vocab_size, input_dims, encoder_params)(inputs);
   # 2) decoder cell
-  input_lengths = tf.keras.layers.Lambda(lambda x: tf.map_fn(lambda x: tf.shape(x)[0], x, fn_output_signature = tf.TensorSpec((), dtype = tf.int32)))(inputs); # input_lengths.shape = (batch)
-  hidden_sequences = tf.keras.layers.Lambda(lambda x: x.to_tensor())(hidden_sequences);
   decoder_cell = DecoderCell(decoder_params);
   # 3) attention decoder cell
+  hidden_sequences = tf.keras.layers.Lambda(lambda x: x.to_tensor())(hidden_sequences);
+  input_lengths = tf.keras.layers.Lambda(lambda x: tf.map_fn(lambda x: tf.shape(x)[0], x, fn_output_signature = tf.TensorSpec((), dtype = tf.int32)))(inputs); # input_lengths.shape = (batch)
   if attention_params['attention_mode'] in ['luong', 'scaled_luong']:
     attention_fn = tfa.seq2seq.LuongAttention(units = attention_params['units'], memory = hidden_sequences, memory_sequence_length = input_lengths, scale = True if attention_params['attention_mode'] == 'scaled_luong' else False);
   elif attention_params['attention_mode'] in ['bahdanau', 'normed_bahdanau']:
@@ -193,10 +193,10 @@ def GNMT(src_vocab_size, tgt_vocab_size, input_dims, is_train = False,
   hidden_sequences, hidden, cell = Encoder(src_vocab_size, input_dims, encoder_params)(inputs);
   # 2) decoder
   decoder_cell = DecoderCell(decoder_params);
-  output_layer = tf.keras.layers.Dense(tgt_vocab_size, use_bias = False);
+  # 3) 
 
 if __name__ == "__main__":
-  
+
   assert tf.executing_eagerly();
   nmt = NMT(100, 200, 64, is_train = True);
   nmt.save('nmt_train.h5');
