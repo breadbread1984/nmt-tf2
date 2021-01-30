@@ -185,14 +185,12 @@ def AttentionModel(src_vocab_size, tgt_vocab_size, input_dims, is_train = False,
   else:
     raise 'unknown attention mechanism!';
   decoder_cell = tfa.seq2seq.AttentionWrapper(decoder_cell, attention_fn, attention_params['units'], alignment_history = is_train == False and infer_params['infer_mode'] != 'beam_search', output_attention = attention_params['output_attention']);
-  if encoder_params['enc_type'] == 'gnmt':
-    # TODO: wrap decoder cell again
-    # NOTE: use gnmt residual function
-  elif encoder_params['enc_type'] == 'gnmt_v2':
-    # TODO: wrap decoder cell again
-    # NOTE: use gnmt residual function
   # 4) decoder
-  output = Decoder(inputs, targets if is_train == True else None, hidden, cell, decoder_cell, tgt_vocab_size, input_dims, is_train, infer_params);
+  if encoder_params['enc_type'] not in ['gnmt', 'gnmt_v2']:
+    output = Decoder(inputs, targets if is_train == True else None, hidden, cell, decoder_cell, tgt_vocab_size, input_dims, is_train, infer_params);
+  else:
+    # TODO: GNMT_Decoder
+    # NOTE: use gnmt residual function
   return tf.keras.Model(inputs = (inputs, targets) if is_train == True else inputs, outputs = output.rnn_output if is_train == True or infer_params['infer_mode'] != 'beam_search' else output.predicted_ids);
 
 if __name__ == "__main__":
