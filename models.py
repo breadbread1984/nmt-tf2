@@ -161,18 +161,19 @@ def AttentionModel(src_vocab_size, tgt_vocab_size, input_dims, is_train = False,
   hidden_sequences, hidden, cell = Encoder(src_vocab_size, input_dims, encoder_params)(inputs);
   # 2) decoder cell
   input_lengths = tf.keras.layers.Lambda(lambda x: tf.map_fn(lambda x: tf.shape(x)[0], x, fn_output_signature = tf.TensorSpec((), dtype = tf.int32)))(inputs); # input_lengths.shape = (batch)
+  hidden_sequences = tf.keras.layers.Lambda(lambda x: x.to_tensor())(hidden_sequences);
   decoder_cell = DecoderCell(decoder_params);
   # 3) attention decoder cell
   if attention_params['attention_mode'] in ['luong', 'scaled_luong']:
-    attention_fn = tfa.seq2seq.LuongAttention(attention_params['units'], hidden_sequences, input_lengths, scale = True if attention_params['attention_mode'] == 'scaled_luong' else False);
+    attention_fn = tfa.seq2seq.LuongAttention(units = attention_params['units'], memory = hidden_sequences, memory_sequence_length = input_lengths, scale = True if attention_params['attention_mode'] == 'scaled_luong' else False);
   elif attention_params['attention_mode'] in ['bahdanau', 'normed_bahdanau']:
-    attention_fn = tfa.seq2seq.BahdanauAttention(attention_params['units'], hidden_sequences, input_lengths, normalize = True if attention_params['attention_mode'] == 'normed_bahdanau' else False);
+    attention_fn = tfa.seq2seq.BahdanauAttention(units = attention_params['units'], memory = hidden_sequences, memory_sequence_length = input_lengths, normalize = True if attention_params['attention_mode'] == 'normed_bahdanau' else False);
   else:
     raise 'unknown attention mechanism!';
-  decoder_cell = tfa.seq2seq.AttentionWrapper(decoder_cell, attention_fn, attention_params['units'], is_train == False and infer_params['infer_mode'] != 'beam_search', attention_params['output_attention']);
+  decoder_cell = tfa.seq2seq.AttentionWrapper(decoder_cell, attention_fn, attention_params['units'], alignment_history = is_train == False and infer_params['infer_mode'] != 'beam_search', output_attention = attention_params['output_attention']);
   # 4) decoder
-  output_layer = tf.keras.layers.Dense(tgt_vocab_size, use_bias = False);
-  
+  output = Decoder(inputs, targets if is_train == True else None, hidden, cell, decoder_cell, tgt_vocab_size, input_dims, is_train, infer_params);
+  return tf.keras.Model(inputs = (inputs, targets) if is_train == True else inputs, outputs = output.rnn_output if is_train == True or infer_params['infer_mode'] != 'beam_search' else output.predicted_ids);
 
 def GNMT(src_vocab_size, tgt_vocab_size, input_dims, is_train = False,
          encoder_params = {'enc_type': 'uni', 'unit_type': 'lstm', 'units': 32, 'drop_rate': 0.2, 'forget_bias': 1.0, 'use_residual': True, 'residual_layer_num': 1, 'layer_num': 2},
@@ -206,9 +207,16 @@ if __name__ == "__main__":
   infer_params = {'infer_mode': 'beam_search', 'start_token': 1, 'end_token': 2, 'max_infer_len': None, 'beam_width': 2, 'length_penalty_weight': 0., 'coverage_penalty_weight': 0.};
   nmt = NMT(100, 200, 64, infer_params = infer_params);
   nmt.save('nmt_infer_beamsearch.h5');
+  '''
   infer_params = {'infer_mode': 'sample', 'start_token': 1, 'end_token': 2, 'max_infer_len': None, 'softmax_temperature': 0.};
   nmt = NMT(100, 200, 64, infer_params = infer_params);
   nmt.save('nmt_infer_sample.h5');
   infer_params = {'infer_mode': 'greedy', 'start_token': 1, 'end_token': 2, 'max_infer_len': None};
   nmt = NMT(100, 200, 64, infer_params = infer_params);
   nmt.save('nmt_infer_greedy.h5');
+  '''
+  att_nmt = AttentionModel(100, 200, 64, is_train = True);
+  att_nmt.save('att_nmt_train.h5');
+  infer_params = {'infer_mode': 'beam_search', 'start_token': 1, 'end_token': 2, 'max_infer_len': None, 'beam_width': 2, 'length_penalty_weight': 0., 'coverage_penalty_weight': 0.};
+  att_nmt = AttentionModel(100, 200, 64, infer_params = infer_params);
+  att_nmt.save('att_nmt_beamsearch.h5');
