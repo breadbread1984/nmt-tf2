@@ -113,11 +113,11 @@ def Decoder(inputs, targets, hidden, cell, decoder_cell, tgt_vocab_size, input_d
       decoder = tfa.seq2seq.BasicDecoder(decoder_cell, sampler, output_layer, maximum_iterations = maximum_iterations);
   # NOTE: attention wrapper as decoder cell require different type of initial state (AttentionWrapperState)
   batch = tf.keras.layers.Lambda(lambda x: tf.cast(x.nrows(), dtype = tf.int32))(inputs); # batch.shape = ()
-  initial_state = decoder_cell.get_initial_state(batch_size = batch, dtype = tf.float32).clone((hidden, cell)) if type(decoder_cell) is tfa.seq2seq.AttentionWrapper else (hidden, cell);
   if is_train == True:
     # NOTE: has target_tensors for supervision at training mode
     target_length = tf.keras.layers.Lambda(lambda x: tf.map_fn(lambda x: tf.shape(x)[0], x, fn_output_signature = tf.TensorSpec((), dtype = tf.int32)))(targets); # target_length.shape = (batch)
     target_tensors = tf.keras.layers.Lambda(lambda x: x.to_tensor())(target_tensors);
+    initial_state = decoder_cell.get_initial_state(batch_size = batch, dtype = tf.float32).clone((hidden, cell)) if type(decoder_cell) is tfa.seq2seq.AttentionWrapper else (hidden, cell);
     output, state, lengths = decoder(target_tensors, sequence_length = target_length, initial_state = initial_state);
   else:
     start_tokens = tf.keras.layers.Lambda(lambda x, s: tf.ones((tf.shape(x)[0],), dtype = tf.int32) * s, arguments = {'s': infer_params['start_token']})(hidden);
@@ -127,6 +127,7 @@ def Decoder(inputs, targets, hidden, cell, decoder_cell, tgt_vocab_size, input_d
       hidden, cell = tfa.seq2seq.tile_batch((hidden, cell), infer_params['beam_width']);
       # hidden.shape = (batch * infer_params['beam_width'], encoder_params['units'])
       # cell.shape = (batch * infer_params['beam_width'], encoder_params['units'])
+    initial_state = decoder_cell.get_initial_state(batch_size = batch * (infer_params['beam_width'] if infer_params['infer_mode'] == 'beam_search' else 1), dtype = tf.float32).clone((hidden, cell)) if type(decoder_cell) is tfa.seq2seq.AttentionWrapper else (hidden, cell);
     output, state, lengths = decoder(None, start_tokens = start_tokens, end_token = infer_params['end_token'], initial_state = initial_state);
   # NOTE: rnn_output.shape = (batch, ragged length, tgt_vocab_size) predicted_ids.shape = (batch, beam_width)
   # NOTE: rnn_output is the output of output_layer but output of RNN, this is specified in the document(https://tensorflow.google.cn/addons/api_docs/python/tfa/seq2seq/BasicDecoderOutput)
@@ -189,8 +190,9 @@ def AttentionModel(src_vocab_size, tgt_vocab_size, input_dims, is_train = False,
   if encoder_params['enc_type'] not in ['gnmt', 'gnmt_v2']:
     output = Decoder(inputs, targets if is_train == True else None, hidden, cell, decoder_cell, tgt_vocab_size, input_dims, is_train, infer_params);
   else:
-    # TODO: GNMT_Decoder
+    # TODO: GNMT_Decoder inherit from BasicDecoder
     # NOTE: use gnmt residual function
+    pass
   return tf.keras.Model(inputs = (inputs, targets) if is_train == True else inputs, outputs = output.rnn_output if is_train == True or infer_params['infer_mode'] != 'beam_search' else output.predicted_ids);
 
 if __name__ == "__main__":
